@@ -2,9 +2,36 @@ module main;
 
 @imports
     :: root::transport::framing
-    :: lib::std::fmt;
+    :: lib::std::fmt
+    :: lib::std::io::stdio;
 
 void main() {
-    fmt::println("fuckoff mate");
-    return;
+    standardInput := stdio::standard_input();
+    source := standardInput.reader();
+
+    reader, constructionError :=
+        framing::FramedReader::fromReader(source);
+
+    if constructionError != none {
+        fmt::eprintln("failed to create framed reader");
+        return;
+    }
+
+    body, hasMessage, readError := reader.readMessage();
+    if readError != none {
+        fmt::eprintln("failed to read framed message");
+        return;
+    }
+
+    if !hasMessage {
+        fmt::eprintln("clean EOF");
+        return;
+    }
+
+    fmt::eprintln(
+        "received ",
+        body.len(),
+        " bytes: ",
+        body[:].cast<stringv>
+    );
 }

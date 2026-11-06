@@ -3,6 +3,7 @@ module framing;
 @imports
     :: lib::std::bytes::buffer
     :: lib::std::text::{ascii, strings}
+    :: lib::std::io::{buffered, stream}
     :: lib::std::io::errors as io_errors;
 
 const usize MAX_HEADER_BYTES = 8 * 1024;
@@ -13,19 +14,33 @@ const u8 LF = 10;
 
 const stringv CONTENT_LENGTH = "Content-Length";
 
+(FramedReader, error) FramedReader::fromReader(stream::Reader source) <-source {
+    input, err := buffered::BufferedReader::withCapacity(source, MAX_HEADER_BYTES);
+    if err != none {
+        return (none, err);
+    }
+
+    return (build FramedReader {
+        self.input = input;
+    }, none);
+}
+
 (own []u8, bool, error) FramedReader::readMessage(&self) {
     header := buffer::Buffer::init();
     [1]u8 next = [0];
 
     while true {
-        shouldRet, err := self->read(&header, next[:]); 
+        headerComplete, cleanEof, err := self->read(&header, next[:]);
         if err != none {
             return (none, false, err);
         }
 
-        if shouldRet {
-            // Clean EOF between messages.
+        if cleanEof {
             return (none, false, none);
+        }
+
+        if headerComplete {
+            break;
         }
     }
 
@@ -44,7 +59,7 @@ const stringv CONTENT_LENGTH = "Content-Length";
     }
 
     bodyErr := self->input.readExact(body[:]);
-    if bodyErr != io_errors::IoError.UnexpectedEof {
+    if bodyErr == io_errors::IoError.UnexpectedEof {
         return (none, false, FramingError.TruncatedMessage);
     }
     if bodyErr != none {
@@ -54,43 +69,50 @@ const stringv CONTENT_LENGTH = "Content-Length";
     return (body, true, none);
 }
 
-private (bool, error) FramedReader::read(&self, &buffer::Buffer hBuffer, []u8 next) {
+private (bool, bool, error) FramedReader::read(&self, &buffer::Buffer hBuffer, []u8 next) {
     count, readErr := self->input.read(next);
     if readErr != none {
-        return (true, readErr);
+        return (false, false, readErr);
     }
 
     if count == 0 {
         if hBuffer->empty() {
-            return (true, none);
+            return (false, true, none);
         }
-        
-        // EOF inside the header
-        return (true, FramingError.TruncatedMessage);
+
+        return (
+            false,
+            false,
+            FramingError.TruncatedMessage
+        );
     }
 
     writeErr := hBuffer->writeByte(next[0]);
     if writeErr != none {
-        return (true, writeErr);
+        return (false, false, writeErr);
     }
 
     if hBuffer->len() > MAX_HEADER_BYTES {
-        return (true, FramingError.HeaderTooLarge);
+        return (
+            false,
+            false,
+            FramingError.HeaderTooLarge
+        );
     }
 
     bytes := hBuffer->bytes();
     if bytes.len() >= 4 {
         const usize END = bytes.len();
 
-        if bytes[END - 4] == CR and 
+        if bytes[END - 4] == CR and
             bytes[END - 3] == LF and
             bytes[END - 2] == CR and
             bytes[END - 1] == LF {
-            return (false, none);
+            return (true, false, none);
         }
     }
 
-    return (false, none);
+    return (false, false, none);
 }
 
 (usize, error) parse_content_length([]const u8 header) {
