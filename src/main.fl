@@ -1,26 +1,10 @@
 module main;
 
 @imports
-    :: lib::std::fmt
-    :: lib::json::json;
+    :: root::transport::framing
+    :: lib::std::fmt;
 
-
-@json(structure)
-structure Test {
-    i32 value;
-    own []i32 values;
-};
-
-void main!() {
-    string source = "{\"value\":5,\"values\":[210,2,-32]}";
-
-    t, err := Test::fromJson(source.view().cast<[]const u8>);
-    if err != none {
-        crash("failed to deserialize Test");
-    }
-
-    fmt::println("value: ", t.value);
-    loop usize index = 0; index < t.values.len(); index++ {
-        fmt::println("values[", index, "]: ", t.values[index]);
-    }
+void main() {
+    fmt::println("fuckoff mate");
+    return;
 }

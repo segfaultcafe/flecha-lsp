@@ -1,0 +1,22 @@
+module framing;
+
+@imports
+    :: lib::std::io::buffered;
+
+export error FramingError {
+    InvalidHeader,
+    MissingContentLength,
+    DuplicateContentLength,
+    InvalidContentLength,
+    HeaderTooLarge,
+    BodyTooLarge,
+    TruncatedMessage,
+}
+
+export structure FramedReader {
+    private buffered::BufferedReader input;
+};
+
+export structure FramedWriter {
+    private buffered::BufferedWriter output;
+};
