@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "root": "root",
+  "packages": [
+    {
+      "id": "registry-1",
+      "identity": "flecha/json",
+      "source": {
+        "kind": "registry",
+        "location": "https://registry.flecha-lang.org/v1"
+      },
+      "version": "0.1.1",
+      "checksum": "sha256:f05eac9283c1a384a97064d6f9cc3d2733250d3eccda3693eefbe8d27ad41d79",
+      "flecha": ">=0.3.0, <0.4.0",
+      "dependencies": {
+        "std": "toolchain-std"
+      }
+    },
+    {
+      "id": "root",
+      "identity": "local/flecha_lsp",
+      "source": {
+        "kind": "workspace",
+        "path": "."
+      },
+      "version": "0.1.0",
+      "dependencies": {
+        "json": "registry-1",
+        "std": "toolchain-std"
+      }
+    },
+    {
+      "id": "toolchain-std",
+      "identity": "flecha/std",
+      "source": {
+        "kind": "toolchain"
+      },
+      "dependencies": {}
+    }
+  ]
+}
