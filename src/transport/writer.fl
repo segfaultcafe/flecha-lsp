@@ -1,0 +1,6 @@
+module framing;
+
+/*
+error FramedWriter::writeMessage(&self, []const u8 body);
+error FramedWriter::flush(&self);
+ */

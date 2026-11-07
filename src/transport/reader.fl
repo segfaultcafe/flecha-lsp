@@ -1,0 +1,228 @@
+module framing;
+
+@imports
+    :: lib::std::bytes::buffer
+    :: lib::std::text::{ascii, strings}
+    :: lib::std::io::{buffered, stream}
+    :: lib::std::io::errors as io_errors;
+
+const usize MAX_HEADER_BYTES = 8 * 1024;
+const usize MAX_BODY_BYTES = 64 * 1024 * 1024;
+
+const u8 CR = 13;
+const u8 LF = 10;
+
+const stringv CONTENT_LENGTH = "Content-Length";
+
+(FramedReader, error) FramedReader::fromReader(stream::Reader source) <-source {
+    input, err := buffered::BufferedReader::withCapacity(source, MAX_HEADER_BYTES);
+    if err != none {
+        return (none, err);
+    }
+
+    return (build FramedReader {
+        self.input = input;
+    }, none);
+}
+
+(own []u8, bool, error) FramedReader::readMessage(&self) {
+    header := buffer::Buffer::init();
+    [1]u8 next = [0];
+
+    while true {
+        headerComplete, cleanEof, err := self->read(&header, next[:]);
+        if err != none {
+            return (none, false, err);
+        }
+
+        if cleanEof {
+            return (none, false, none);
+        }
+
+        if headerComplete {
+            break;
+        }
+    }
+
+    contentLength, headerErr := parse_content_length(header.bytes());
+    if headerErr != none {
+        return (none, false, headerErr);
+    }
+
+    if contentLength > MAX_BODY_BYTES {
+        return (none, false, FramingError.BodyTooLarge);
+    }
+
+    body, allocErr := new<own []u8>(contentLength);
+    if allocErr != none {
+        return (none, false, allocErr);
+    }
+
+    bodyErr := self->input.readExact(body[:]);
+    if bodyErr == io_errors::IoError.UnexpectedEof {
+        return (none, false, FramingError.TruncatedMessage);
+    }
+    if bodyErr != none {
+        return (none, false, bodyErr);
+    }
+
+    return (body, true, none);
+}
+
+private (bool, bool, error) FramedReader::read(&self, &buffer::Buffer hBuffer, []u8 next) {
+    count, readErr := self->input.read(next);
+    if readErr != none {
+        return (false, false, readErr);
+    }
+
+    if count == 0 {
+        if hBuffer->empty() {
+            return (false, true, none);
+        }
+
+        return (
+            false,
+            false,
+            FramingError.TruncatedMessage
+        );
+    }
+
+    writeErr := hBuffer->writeByte(next[0]);
+    if writeErr != none {
+        return (false, false, writeErr);
+    }
+
+    if hBuffer->len() > MAX_HEADER_BYTES {
+        return (
+            false,
+            false,
+            FramingError.HeaderTooLarge
+        );
+    }
+
+    bytes := hBuffer->bytes();
+    if bytes.len() >= 4 {
+        const usize END = bytes.len();
+
+        if bytes[END - 4] == CR and
+            bytes[END - 3] == LF and
+            bytes[END - 2] == CR and
+            bytes[END - 1] == LF {
+            return (true, false, none);
+        }
+    }
+
+    return (false, false, none);
+}
+
+(usize, error) parse_content_length([]const u8 header) {
+    bool found;
+    usize result, lineStart, index;
+
+    while index + 1 < header.len() {
+        if header[index] != CR or header[index + 1] != LF {
+            index++;
+            proceed;
+        }
+
+        // Empty line marks the end of the header section
+        if index == lineStart {
+            break;
+        }
+
+        isContentLength, value, lineErr := parse_header_line(header[lineStart:index]);
+        if lineErr != none {
+            return (none, lineErr);
+        }
+
+        if isContentLength {
+            if found {
+                return (none, FramingError.DuplicateContentLength);
+            }
+
+            found = true;
+            result = value;
+        }
+
+        index += 2;
+        lineStart = index;
+    }
+
+    if !found {
+        return (none, FramingError.MissingContentLength);
+    }
+
+    return (result, none);
+}
+
+(bool, usize, error) parse_header_line([]const u8 line) {
+    usize colon = line.len();
+    loop usize i = 0; i < line.len(); i++ {
+        const char CHARACTER = line[i].cast<char>;
+        if CHARACTER == ':' {
+            colon = i;
+            break;
+        }
+    }
+
+    if colon == 0 or colon == line.len() {
+        return (false, none, FramingError.InvalidHeader);
+    }
+
+    if !ascii_equal_ignore_case(line[:colon], CONTENT_LENGTH.cast<[]const u8>) {
+        // Valid but unrelated header
+        return (false, none, none);
+    }
+
+    usize start = colon + 1;
+    while start < line.len() {
+        const char CHARACTER = line[start].cast<char>;
+        if CHARACTER != ' ' and CHARACTER != '\t' {
+            break;
+        }
+
+        start++;
+    }
+
+    usize end = line.len();
+    while end > start {
+        const char CHARACTER = line[end - 1].cast<char>;
+        if CHARACTER != ' ' and CHARACTER != '\t' {
+            break;
+        }
+
+        end--;
+    }
+
+    if start == end {
+        return (false, none, FramingError.InvalidContentLength);
+    }
+
+    const stringv VALUE_TEXT = line[start:end].cast<stringv>;
+    if VALUE_TEXT.len() == 0 or VALUE_TEXT[0] == '+' {
+        return (false, none, FramingError.InvalidContentLength);
+    }
+
+    value, parseErr := strings::stringv_to_int<usize>(VALUE_TEXT);
+    if parseErr != none {
+        return (false, none, FramingError.InvalidContentLength);
+    }
+
+    return (true, value, none);
+}
+
+bool ascii_equal_ignore_case([]const u8 left, []const u8 right) {
+    if left.len() != right.len() {
+        return false;
+    }
+
+    loop usize i = 0; i < left.len(); i++ {
+        const char LEFT = ascii::to_ascii_lowercase(left[i].cast<char>);
+        const char RIGHT = ascii::to_ascii_lowercase(right[i].cast<char>);
+        if LEFT != RIGHT {
+            return false;
+        }
+    }
+
+    return true;
+}
