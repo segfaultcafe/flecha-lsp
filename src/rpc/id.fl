@@ -1,0 +1,45 @@
+module message;
+
+RpcId RpcId::missing() {
+    return build RpcId {
+        self.kindValue = RpcIdKind.Missing;
+        self.numberValue = none;
+        self.textValue = none;
+    };
+}
+
+RpcId RpcId::nullId() {
+    return build RpcId {
+        self.kindValue = RpcIdKind.Null;
+        self.numberValue = none;
+        self.textValue = none;
+    };
+}
+
+RpcId RpcId::fromNumber(i64 value) {
+    return build RpcId {
+        self.kindValue = RpcIdKind.Number;
+        self.numberValue = value;
+        self.textValue = none;
+    };
+}
+
+RpcId RpcId::fromString(string value) {
+    return build RpcId {
+        self.kindValue = RpcIdKind.String;
+        self.numberValue = none;
+        self.textValue = value;
+    };
+}
+
+RpcIdKind RpcId::kind(&const self) {
+    return self->kindValue;
+}
+
+i64 RpcId::number(&const self) {
+    return self->numberValue;
+}
+
+stringv RpcId::text(&const self) <-self {
+    return self->textValue.view();
+}

@@ -1,0 +1,50 @@
+module message;
+
+export error MessageError {
+    InvalidRequest,
+    InvalidVersion,
+    InvalidId,
+    MissingMethod,
+    DuplicateField,
+}
+
+export enum RpcIdKind {
+    default Missing,
+    Null,
+    Number,
+    String,
+}
+
+export structure RpcId {
+    private {
+        RpcIdKind kindValue;
+        i64 numberValue;
+        string textValue;
+    }
+};
+
+export structure RpcRequest {
+    private {
+        RpcId idValue;
+        string methodValue;
+        own []u8 paramsValue;
+        bool hasParamsValue;
+    }
+};
+
+export enum RpcResponseKind {
+    default Success,
+    Error,
+}
+
+export structure RpcResponse {
+    private {
+        RpcId idValue;
+        RpcResponseKind kindValue;
+        own []u8 payloadValue;
+        i32 errorCodeValue;
+        string errorMessageValue;
+        bool hasErrorDataValue;
+        own []u8 errorDataValue;
+    }
+};

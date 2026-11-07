@@ -1,0 +1,191 @@
+module message;
+
+@imports
+    :: lib::json::json
+    :: lib::std::memory::slices;
+
+(RpcRequest, error) RpcRequest::parse([]const u8 source) {
+    reader := json::Reader::init(source);
+    beginErr := reader.beginObject();
+    if beginErr != none {
+        return (none, beginErr);
+    }
+
+    RpcId id = RpcId::missing();
+    string method = none;
+    own []u8 params = none;
+
+    bool hasVersion;
+    bool hasMethod;
+    bool hasId;
+    bool hasParams;
+
+    more, err := reader.nextObjectField();
+    while err == none and more {
+        if reader.keyIs("jsonrpc") {
+            if hasVersion {
+                return (none, MessageError.DuplicateField);
+            }
+            hasVersion = true;
+
+            version, versionErr := reader.readString();
+            if versionErr != none {
+                return (none, MessageError.InvalidVersion);
+            }
+            if version.view() != "2.0" {
+                return (none, MessageError.InvalidVersion);
+            }
+        } else if reader.keyIs("method") {
+            if hasMethod {
+                return (none, MessageError.DuplicateField);
+            }
+            hasMethod = true;
+
+            method, err = reader.readString();
+            if err != none {
+                return (none, MessageError.MissingMethod);
+            }
+        } else if reader.keyIs("id") {
+            if hasId {
+                return (none, MessageError.DuplicateField);
+            }
+            hasId = true;
+
+            id, err = RpcRequest::readId(&reader, source);
+            if err != none {
+                return (none, err);
+            }
+        } else if reader.keyIs("params") {
+            if hasParams {
+                return (none, MessageError.DuplicateField);
+            }
+            hasParams = true;
+
+            params, err = RpcRequest::readParams(&reader, source);
+            if err != none {
+                return (none, err);
+            }
+        } else {
+            err = reader.skipValue();
+            if err != none {
+                return (none, err);
+            }
+        }
+
+        more, err = reader.nextObjectField();
+    }
+
+    if err != none {
+        return (none, err);
+    }
+
+    finishErr := reader.finish();
+    if finishErr != none {
+        return (none, finishErr);
+    }
+    if !hasVersion {
+        return (none, MessageError.InvalidVersion);
+    }
+    if !hasMethod {
+        return (none, MessageError.MissingMethod);
+    }
+
+    return (build RpcRequest {
+        self.idValue = id;
+        self.methodValue = method;
+        self.paramsValue = params;
+        self.hasParamsValue = hasParams;
+    }, none);
+}
+
+private (RpcId, error) RpcRequest::readId(
+    &json::Reader reader,
+    []const u8 source
+) {
+    const usize START = RpcRequest::valueStart(source, reader->position());
+    if START >= source.len() {
+        return (none, MessageError.InvalidId);
+    }
+
+    const u8 FIRST = source[START];
+    if FIRST == 110 {
+        readErr := reader->readNull();
+        if readErr != none {
+            return (none, readErr);
+        }
+        return (RpcId::nullId(), none);
+    }
+
+    if FIRST == 34 {
+        text, readErr := reader->readString();
+        if readErr != none {
+            return (none, readErr);
+        }
+        return (RpcId::fromString(text), none);
+    }
+
+    if FIRST == 45 or (FIRST >= 48 and FIRST <= 57) {
+        i64 number = none;
+        readErr := reader->read(&number);
+        if readErr != none {
+            return (none, MessageError.InvalidId);
+        }
+        return (RpcId::fromNumber(number), none);
+    }
+
+    return (none, MessageError.InvalidId);
+}
+
+private (own []u8, error) RpcRequest::readParams(
+    &json::Reader reader,
+    []const u8 source
+) {
+    const usize START = RpcRequest::valueStart(source, reader->position());
+    skipErr := reader->skipValue();
+    if skipErr != none {
+        return (none, skipErr);
+    }
+
+    const usize END = reader->position();
+    raw, allocationErr := new<own []u8>(END - START);
+    if allocationErr != none {
+        return (none, allocationErr);
+    }
+
+    slices::copy_elements<u8>(raw[:], source[START:END]);
+    return (raw, none);
+}
+
+private usize RpcRequest::valueStart(
+    []const u8 source,
+    usize position
+) {
+    while position < source.len() {
+        const u8 BYTE = source[position];
+        if BYTE != 32 and BYTE != 9 and BYTE != 10 and BYTE != 13 {
+            break;
+        }
+        position++;
+    }
+    return position;
+}
+
+&const RpcId RpcRequest::id(&const self) <-self {
+    return &self->idValue;
+}
+
+stringv RpcRequest::method(&const self) <-self {
+    return self->methodValue.view();
+}
+
+bool RpcRequest::hasParams(&const self) {
+    return self->hasParamsValue;
+}
+
+[]const u8 RpcRequest::params(&const self) <-self {
+    return self->paramsValue[:];
+}
+
+bool RpcRequest::isNotification(&const self) {
+    return self->idValue.kind() == RpcIdKind.Missing;
+}

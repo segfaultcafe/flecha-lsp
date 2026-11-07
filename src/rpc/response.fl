@@ -1,0 +1,166 @@
+module message;
+
+@imports
+    :: lib::json::json
+    :: lib::std::memory::slices
+    :: lib::std::text::strings;
+
+(RpcResponse, error) RpcResponse::success(
+    RpcId id,
+    []const u8 result
+) {
+    payload, allocationErr := RpcResponse::copyJson(result);
+    if allocationErr != none {
+        return (none, allocationErr);
+    }
+
+    return (build RpcResponse {
+        self.idValue = id;
+        self.kindValue = RpcResponseKind.Success;
+        self.payloadValue = payload;
+        self.errorCodeValue = none;
+        self.errorMessageValue = none;
+        self.hasErrorDataValue = false;
+        self.errorDataValue = none;
+    }, none);
+}
+
+(RpcResponse, error) RpcResponse::failure(
+    RpcId id,
+    i32 code,
+    stringv message
+) {
+    response, err := RpcResponse::buildFailure(
+        id,
+        code,
+        message,
+        false,
+        "".cast<[]const u8>
+    );
+    return (response, err);
+}
+
+(RpcResponse, error) RpcResponse::failure(
+    RpcId id,
+    i32 code,
+    stringv message,
+    []const u8 data
+) {
+    response, err := RpcResponse::buildFailure(
+        id,
+        code,
+        message,
+        true,
+        data
+    );
+    return (response, err);
+}
+
+private (RpcResponse, error) RpcResponse::buildFailure(
+    RpcId id,
+    i32 code,
+    stringv message,
+    bool hasData,
+    []const u8 data
+) {
+    messageCopy, messageErr := strings::string_from_bytes(
+        message.cast<[]const u8>
+    );
+    if messageErr != none {
+        return (none, messageErr);
+    }
+
+    own []u8 dataCopy = none;
+    if hasData {
+        error dataErr = none;
+        dataCopy, dataErr = RpcResponse::copyJson(data);
+        if dataErr != none {
+            return (none, dataErr);
+        }
+    }
+
+    return (build RpcResponse {
+        self.idValue = id;
+        self.kindValue = RpcResponseKind.Error;
+        self.payloadValue = none;
+        self.errorCodeValue = code;
+        self.errorMessageValue = messageCopy;
+        self.hasErrorDataValue = hasData;
+        self.errorDataValue = dataCopy;
+    }, none);
+}
+
+(own []u8, error) RpcResponse::serialize(&const self) {
+    if self->idValue.kind() == RpcIdKind.Missing {
+        return (none, MessageError.InvalidId);
+    }
+
+    writer := json::Writer::init();
+    err := writer.beginObject();
+    if err == none { err = writer.key("jsonrpc"); }
+    if err == none { err = writer.write("2.0"); }
+    if err == none { err = writer.key("id"); }
+    if err == none { err = self->writeId(&writer); }
+
+    if self->kindValue == RpcResponseKind.Success {
+        if err == none { err = writer.key("result"); }
+        if err == none { err = writer.writeRaw(self->payloadValue[:]); }
+    } else {
+        if err == none { err = writer.key("error"); }
+        if err == none { err = writer.beginObject(); }
+        if err == none { err = writer.key("code"); }
+        if err == none { err = writer.write(self->errorCodeValue); }
+        if err == none { err = writer.key("message"); }
+        if err == none { err = writer.write(self->errorMessageValue); }
+        if err == none and self->hasErrorDataValue {
+            err = writer.key("data");
+            if err == none {
+                err = writer.writeRaw(self->errorDataValue[:]);
+            }
+        }
+        if err == none { err = writer.endObject(); }
+    }
+
+    if err == none { err = writer.endObject(); }
+    if err != none {
+        return (none, err);
+    }
+
+    return writer.finish();
+}
+
+RpcResponseKind RpcResponse::kind(&const self) {
+    return self->kindValue;
+}
+
+&const RpcId RpcResponse::id(&const self) <-self {
+    return &self->idValue;
+}
+
+private error RpcResponse::writeId(
+    &const self,
+    &json::Writer writer
+) {
+    const RpcIdKind KIND = self->idValue.kind();
+    if KIND == RpcIdKind.Null {
+        return writer->writeNull();
+    }
+    if KIND == RpcIdKind.Number {
+        return writer->write(self->idValue.number());
+    }
+    if KIND == RpcIdKind.String {
+        return writer->write(self->idValue.text());
+    }
+
+    return MessageError.InvalidId;
+}
+
+private (own []u8, error) RpcResponse::copyJson([]const u8 source) {
+    copy, allocationErr := new<own []u8>(source.len());
+    if allocationErr != none {
+        return (none, allocationErr);
+    }
+
+    slices::copy_elements<u8>(copy[:], source);
+    return (copy, none);
+}

@@ -1,0 +1,182 @@
+module message_test;
+
+@imports
+    :: root::rpc::message
+    :: lib::std::tests::{asserts, testing};
+
+test parses_numeric_ids_methods_and_raw_params(&testing::UnitTest t) {
+    request, parseErr := message::RpcRequest::parse(
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"initialize\"," +
+            "\"params\": {\"rootUri\":null,\"workDone\":true} }"
+        ).view().cast<[]const u8>
+    );
+
+    asserts::is_true(t, parseErr == none, "the request parses");
+    if parseErr != none {
+        return;
+    }
+
+    id := request.id();
+    asserts::is_true(
+        t,
+        id->kind() == message::RpcIdKind.Number and id->number() == 42,
+        "the numeric request ID is preserved"
+    );
+    asserts::string_equal(
+        t,
+        request.method(),
+        "initialize",
+        "the method is preserved"
+    );
+    asserts::is_true(t, request.hasParams(), "params remain present");
+    asserts::bytes_equal(
+        t,
+        request.params(),
+        "{\"rootUri\":null,\"workDone\":true}".cast<[]const u8>,
+        "params retain their complete raw JSON value"
+    );
+}
+
+test distinguishes_string_null_and_missing_ids(&testing::UnitTest t) {
+    textual, textualErr := message::RpcRequest::parse(
+        "{\"jsonrpc\":\"2.0\",\"id\":\"editor-1\",\"method\":\"hover\"}"
+            .cast<[]const u8>
+    );
+    explicitNull, nullErr := message::RpcRequest::parse(
+        "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"shutdown\"}"
+            .cast<[]const u8>
+    );
+    notification, notificationErr := message::RpcRequest::parse(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}"
+            .cast<[]const u8>
+    );
+
+    asserts::is_true(
+        t,
+        textualErr == none and
+            textual.id()->kind() == message::RpcIdKind.String,
+        "string IDs parse"
+    );
+    if textualErr == none {
+        asserts::string_equal(
+            t,
+            textual.id()->text(),
+            "editor-1",
+            "string ID contents are preserved"
+        );
+    }
+    asserts::is_true(
+        t,
+        nullErr == none and
+            explicitNull.id()->kind() == message::RpcIdKind.Null and
+            !explicitNull.isNotification(),
+        "an explicit null ID remains distinct from a notification"
+    );
+    asserts::is_true(
+        t,
+        notificationErr == none and notification.isNotification() and
+            notification.id()->kind() == message::RpcIdKind.Missing,
+        "an absent ID produces a notification"
+    );
+    asserts::is_true(
+        t,
+        !notification.hasParams() and notification.params().len() == 0,
+        "absent params remain distinguishable"
+    );
+}
+
+test accepts_any_json_value_as_params(&testing::UnitTest t) {
+    objectRequest, objectErr := message::RpcRequest::parse(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"object\",\"params\":{\"x\":[1]}}"
+            .cast<[]const u8>
+    );
+    arrayRequest, arrayErr := message::RpcRequest::parse(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"array\",\"params\":[1,true]}"
+            .cast<[]const u8>
+    );
+    nullRequest, nullErr := message::RpcRequest::parse(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"nullable\",\"params\":null}"
+            .cast<[]const u8>
+    );
+
+    asserts::is_true(
+        t,
+        objectErr == none and arrayErr == none and nullErr == none,
+        "object, array, and null params parse"
+    );
+    if objectErr == none {
+        asserts::bytes_equal(
+            t,
+            objectRequest.params(),
+            "{\"x\":[1]}".cast<[]const u8>,
+            "object params remain raw"
+        );
+    }
+    if arrayErr == none {
+        asserts::bytes_equal(
+            t,
+            arrayRequest.params(),
+            "[1,true]".cast<[]const u8>,
+            "array params remain raw"
+        );
+    }
+    if nullErr == none {
+        asserts::bytes_equal(
+            t,
+            nullRequest.params(),
+            "null".cast<[]const u8>,
+            "explicit null params remain present"
+        );
+    }
+}
+
+test rejects_invalid_request_envelopes(&testing::UnitTest t) {
+    _, missingVersionErr := message::RpcRequest::parse(
+        "{\"method\":\"initialize\"}".cast<[]const u8>
+    );
+    _, wrongVersionErr := message::RpcRequest::parse(
+        "{\"jsonrpc\":\"1.0\",\"method\":\"initialize\"}"
+            .cast<[]const u8>
+    );
+    _, missingMethodErr := message::RpcRequest::parse(
+        "{\"jsonrpc\":\"2.0\"}".cast<[]const u8>
+    );
+    _, booleanIdErr := message::RpcRequest::parse(
+        "{\"jsonrpc\":\"2.0\",\"id\":true,\"method\":\"initialize\"}"
+            .cast<[]const u8>
+    );
+    _, fractionalIdErr := message::RpcRequest::parse(
+        "{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"initialize\"}"
+            .cast<[]const u8>
+    );
+    _, duplicateErr := message::RpcRequest::parse(
+        (
+            "{\"jsonrpc\":\"2.0\",\"method\":\"first\"," +
+            "\"method\":\"second\"}"
+        ).view().cast<[]const u8>
+    );
+
+    asserts::is_true(
+        t,
+        missingVersionErr == message::MessageError.InvalidVersion and
+            wrongVersionErr == message::MessageError.InvalidVersion,
+        "JSON-RPC 2.0 is required"
+    );
+    asserts::is_true(
+        t,
+        missingMethodErr == message::MessageError.MissingMethod,
+        "method is required"
+    );
+    asserts::is_true(
+        t,
+        booleanIdErr == message::MessageError.InvalidId and
+            fractionalIdErr == message::MessageError.InvalidId,
+        "IDs must be null, integer, or string values"
+    );
+    asserts::is_true(
+        t,
+        duplicateErr == message::MessageError.DuplicateField,
+        "duplicate envelope fields are rejected"
+    );
+}
