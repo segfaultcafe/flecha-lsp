@@ -1,0 +1,23 @@
+module server;
+
+@imports :: root::transport::framing;
+
+export enum ServerState {
+    default Uninitialized,
+    Initializing,
+    Ready,
+    Shutdown,
+    Exited,
+}
+
+export structure Server {
+    private {
+        framing::FramedReader input;
+        framing::FramedWriter output;
+        ServerState stateValue;
+    }
+};
+
+ServerState Server::state(&const self) {
+    return self->stateValue;
+}

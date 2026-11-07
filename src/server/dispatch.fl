@@ -1,0 +1,60 @@
+module server;
+
+@imports :: root::rpc::message;
+
+private error Server::dispatch(
+    &self,
+    message::RpcRequest request
+) {
+    const stringv METHOD = request.method();
+
+    if METHOD == "exit" {
+        self->stateValue = ServerState.Exited;
+        return none;
+    }
+
+    if request.isNotification() {
+        if METHOD == "initialized" and
+            self->stateValue == ServerState.Initializing {
+            self->stateValue = ServerState.Ready;
+        }
+        return none;
+    }
+
+    id, idErr := request.id()->clone();
+    if idErr != none {
+        return idErr;
+    }
+
+    message::RpcResponse response = none;
+    error responseErr = none;
+
+    if METHOD == "initialize" {
+        response, responseErr = message::RpcResponse::success(
+            id,
+            "{\"capabilities\":{}}".cast<[]const u8>
+        );
+        if responseErr == none {
+            self->stateValue = ServerState.Initializing;
+        }
+    } else if METHOD == "shutdown" {
+        response, responseErr = message::RpcResponse::success(
+            id,
+            "null".cast<[]const u8>
+        );
+        if responseErr == none {
+            self->stateValue = ServerState.Shutdown;
+        }
+    } else {
+        response, responseErr = message::RpcResponse::failure(
+            id,
+            -32601,
+            "Method not found"
+        );
+    }
+
+    if responseErr != none {
+        return responseErr;
+    }
+    return self->writeResponse(&response);
+}

@@ -4,4 +4,4 @@ version = "0.1.0"
 kind = "program"
 
 [dependencies]
-json = { package = "flecha/json", version = "*" }
+json = { package = "flecha/json", version = "^0.1.2" }

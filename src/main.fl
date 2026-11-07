@@ -1,37 +1,27 @@
 module main;
 
 @imports
-    :: root::transport::framing
+    :: root::server::server
     :: lib::std::fmt
     :: lib::std::io::stdio;
 
 void main() {
     standardInput := stdio::standard_input();
-    source := standardInput.reader();
+    standardOutput := stdio::standard_output();
 
-    reader, constructionError :=
-        framing::FramedReader::fromReader(source);
+    instance, constructionError := server::Server::fromStreams(
+        standardInput.reader(),
+        standardOutput.writer()
+    );
 
     if constructionError != none {
-        fmt::eprintln("failed to create framed reader");
+        fmt::eprintln("failed to create LSP server");
         return;
     }
 
-    body, hasMessage, readError := reader.readMessage();
-    if readError != none {
-        fmt::eprintln("failed to read framed message");
+    runError := instance.run();
+    if runError != none {
+        fmt::eprintln("LSP server failed");
         return;
     }
-
-    if !hasMessage {
-        fmt::eprintln("clean EOF");
-        return;
-    }
-
-    fmt::eprintln(
-        "received ",
-        body.len(),
-        " bytes: ",
-        body[:].cast<stringv>
-    );
 }

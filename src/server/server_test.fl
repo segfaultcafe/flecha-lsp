@@ -1,0 +1,146 @@
+module server_test;
+
+@imports
+    :: root::server::server
+    :: lib::std::io::stream
+    :: lib::std::tests::{asserts, testing};
+
+(usize, error) read_input(
+    []const u8 source,
+    &usize position,
+    []u8 destination
+) {
+    usize count = destination.len();
+    const usize REMAINING = source.len() - *position;
+    if count > REMAINING {
+        count = REMAINING;
+    }
+
+    loop usize index = 0; index < count; index++ {
+        destination[index] = source[*position + index];
+    }
+    *position = *position + count;
+    return (count, none);
+}
+
+test runs_initialize_shutdown_and_exit_end_to_end(
+    &testing::UnitTest t
+) {
+    const stringv INITIALIZE =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}";
+    const stringv INITIALIZED =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}";
+    const stringv SHUTDOWN =
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"shutdown\"}";
+    const stringv EXIT =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}";
+    input := (
+        "Content-Length: 58\r\n\r\n" + INITIALIZE +
+        "Content-Length: 52\r\n\r\n" + INITIALIZED +
+        "Content-Length: 44\r\n\r\n" + SHUTDOWN +
+        "Content-Length: 33\r\n\r\n" + EXIT
+    );
+    source := input.view().cast<[]const u8>;
+    usize inputPosition = 0;
+    reader := stream::Reader::init(
+        [&const source, &inputPosition](destination) => {
+            return read_input(source, &inputPosition, destination);
+        }
+    );
+
+    [512]u8 destination = none;
+    usize outputPosition = 0;
+    writer := stream::Writer::init(
+        [&destination, &outputPosition](bytes) => {
+            loop usize index = 0; index < bytes.len(); index++ {
+                destination[outputPosition + index] = bytes[index];
+            }
+            outputPosition = outputPosition + bytes.len();
+            return (bytes.len(), none);
+        }
+    );
+
+    instance, constructionErr := server::Server::fromStreams(reader, writer);
+    asserts::is_true(
+        t,
+        constructionErr == none,
+        "the server is constructed over in-memory streams"
+    );
+    if constructionErr != none {
+        return;
+    }
+
+    runErr := instance.run();
+    asserts::is_true(t, runErr == none, "the complete LSP flow succeeds");
+    asserts::is_true(
+        t,
+        instance.state() == server::ServerState.Exited,
+        "exit stops the server after shutdown"
+    );
+
+    const stringv INITIALIZE_RESPONSE =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capabilities\":{}}}";
+    const stringv SHUTDOWN_RESPONSE =
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":null}";
+    expected := (
+        "Content-Length: 53\r\n\r\n" + INITIALIZE_RESPONSE +
+        "Content-Length: 38\r\n\r\n" + SHUTDOWN_RESPONSE
+    );
+    asserts::bytes_equal(
+        t,
+        destination[:outputPosition],
+        expected.view().cast<[]const u8>,
+        "requests receive framed responses while notifications stay silent"
+    );
+}
+
+test returns_method_not_found_only_for_requests(
+    &testing::UnitTest t
+) {
+    const stringv REQUEST =
+        "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"flecha/unknown\"}";
+    const stringv NOTIFICATION =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"flecha/unknown\"}";
+    input := (
+        "Content-Length: 50\r\n\r\n" + REQUEST +
+        "Content-Length: 43\r\n\r\n" + NOTIFICATION
+    );
+    source := input.view().cast<[]const u8>;
+    usize inputPosition = 0;
+    reader := stream::Reader::init(
+        [&const source, &inputPosition](destination) => {
+            return read_input(source, &inputPosition, destination);
+        }
+    );
+
+    [256]u8 destination = none;
+    usize outputPosition = 0;
+    writer := stream::Writer::init(
+        [&destination, &outputPosition](bytes) => {
+            loop usize index = 0; index < bytes.len(); index++ {
+                destination[outputPosition + index] = bytes[index];
+            }
+            outputPosition = outputPosition + bytes.len();
+            return (bytes.len(), none);
+        }
+    );
+
+    instance, constructionErr := server::Server::fromStreams(reader, writer);
+    if constructionErr != none {
+        asserts::is_true(t, false, "the server is constructed");
+        return;
+    }
+    runErr := instance.run();
+
+    string RESPONSE =
+        "{\"jsonrpc\":\"2.0\",\"id\":9,\"error\":{\"code\":-32601," +
+        "\"message\":\"Method not found\"}}";
+    expected := "Content-Length: 77\r\n\r\n" + RESPONSE;
+    asserts::is_true(t, runErr == none, "EOF cleanly ends the server loop");
+    asserts::bytes_equal(
+        t,
+        destination[:outputPosition],
+        expected.view().cast<[]const u8>,
+        "unknown requests get -32601 and unknown notifications get no response"
+    );
+}
