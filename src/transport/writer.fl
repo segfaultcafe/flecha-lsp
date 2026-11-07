@@ -1,6 +1,39 @@
 module framing;
 
-/*
-error FramedWriter::writeMessage(&self, []const u8 body);
-error FramedWriter::flush(&self);
- */
+@imports
+    :: lib::std::fmt
+    :: lib::std::io::{buffered, stream};
+
+(FramedWriter, error) FramedWriter::fromWriter(stream::Writer writer) <-writer {
+    output, err := 
+        buffered::BufferedWriter::withCapacity(writer, OUTPUT_BUFFER_BYTES);
+    if err != none {
+        return (none, err);
+    }
+
+    return (build FramedWriter {
+        self.output = output;
+    }, none);
+}
+
+error FramedWriter::writeMessage(&self, []const u8 body) {
+    if body.len() > MAX_BODY_BYTES {
+        return FramingError.BodyTooLarge;
+    }
+
+    header, fmtErr := fmt::sprintf("{}: {}\r\n\r\n", CONTENT_LENGTH, body.len()); 
+    if fmtErr != none {
+        return fmtErr;
+    }
+
+    headerErr := self->output.writeAll(header.view().cast<[]const u8>);
+    if headerErr != none {
+        return headerErr;
+    }
+
+    return self->output.writeAll(body);
+}
+
+error FramedWriter::flush(&self) {
+    return self->output.flush();
+}

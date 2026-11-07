@@ -1,1 +1,410 @@
 module framing_test;
+
+@imports
+    :: root::transport::framing
+    :: lib::std::io::errors as io_errors
+    :: lib::std::io::stream
+    :: lib::std::tests::{asserts, testing};
+
+(usize, error) read_source(
+    []const u8 source,
+    &usize position,
+    usize maximumChunk,
+    []u8 destination
+) {
+    usize count = destination.len();
+    if maximumChunk != 0 and count > maximumChunk {
+        count = maximumChunk;
+    }
+
+    const usize REMAINING = source.len() - *position;
+    if count > REMAINING {
+        count = REMAINING;
+    }
+
+    loop usize index = 0; index < count; index++ {
+        destination[index] = source[*position + index];
+    }
+    *position = *position + count;
+    return (count, none);
+}
+
+void expect_message(
+    &testing::UnitTest t,
+    stringv input,
+    stringv expected,
+    usize maximumChunk
+) {
+    source := input.cast<[]const u8>;
+    usize position = 0;
+    streamReader := stream::Reader::init(
+        [&const source, &position, &const maximumChunk](destination) => {
+            return read_source(source, &position, maximumChunk, destination);
+        }
+    );
+    reader, constructionError := framing::FramedReader::fromReader(streamReader);
+    asserts::is_true(
+        t,
+        constructionError == none,
+        "the framed reader is constructed"
+    );
+    if constructionError != none {
+        return;
+    }
+
+    body, hasMessage, readError := reader.readMessage();
+    asserts::is_true(t, readError == none, "the frame is read successfully");
+    asserts::is_true(t, hasMessage, "a complete frame produces a message");
+    if readError != none or !hasMessage {
+        return;
+    }
+
+    asserts::bytes_equal(
+        t,
+        body[:],
+        expected.cast<[]const u8>,
+        "the body matches Content-Length exactly"
+    );
+}
+
+void expect_error(
+    &testing::UnitTest t,
+    stringv input,
+    framing::FramingError expected
+) {
+    source := input.cast<[]const u8>;
+    usize position = 0;
+    streamReader := stream::Reader::init(
+        [&const source, &position](destination) => {
+            return read_source(source, &position, 3, destination);
+        }
+    );
+    reader, constructionError := framing::FramedReader::fromReader(streamReader);
+    asserts::is_true(
+        t,
+        constructionError == none,
+        "the framed reader is constructed"
+    );
+    if constructionError != none {
+        return;
+    }
+
+    body, hasMessage, readError := reader.readMessage();
+    asserts::is_true(t, !hasMessage, "an invalid frame produces no message");
+    asserts::is_true(t, body.len() == 0, "an invalid frame produces no body");
+    asserts::is_true(t, readError == expected, "the expected framing error is returned");
+}
+
+test reads_a_complete_message(&testing::UnitTest t) {
+    expect_message(t, "Content-Length: 5\r\n\r\nhello", "hello", 0);
+}
+
+test reads_an_empty_message(&testing::UnitTest t) {
+    expect_message(t, "Content-Length: 0\r\n\r\n", "", 0);
+}
+
+test accepts_partial_underlying_reads(&testing::UnitTest t) {
+    expect_message(t, "Content-Length: 5\r\n\r\nhello", "hello", 1);
+}
+
+test ignores_unknown_headers_and_content_length_case(
+    &testing::UnitTest t
+) {
+    expect_message(
+        t,
+        "Content-Type: application/json\r\ncOnTeNt-LeNgTh:\t4 \t\r\n\r\ntest",
+        "test",
+        2
+    );
+}
+
+test reads_consecutive_messages_without_losing_buffered_bytes(
+    &testing::UnitTest t
+) {
+    source := "Content-Length: 3\r\n\r\noneContent-Length: 3\r\n\r\ntwo"
+        .cast<[]const u8>;
+    usize position = 0;
+    streamReader := stream::Reader::init(
+        [&const source, &position](destination) => {
+            return read_source(source, &position, 0, destination);
+        }
+    );
+    reader, constructionError := framing::FramedReader::fromReader(streamReader);
+    asserts::is_true(
+        t,
+        constructionError == none,
+        "the framed reader is constructed"
+    );
+    if constructionError != none {
+        return;
+    }
+
+    first, hasFirst, firstError := reader.readMessage();
+    second, hasSecond, secondError := reader.readMessage();
+    _, hasThird, thirdError := reader.readMessage();
+
+    asserts::is_true(
+        t,
+        hasFirst and firstError == none,
+        "the first message is available"
+    );
+    asserts::is_true(
+        t,
+        hasSecond and secondError == none,
+        "the second message is available"
+    );
+    asserts::bytes_equal(
+        t,
+        first[:],
+        "one".cast<[]const u8>,
+        "the first body is preserved"
+    );
+    asserts::bytes_equal(
+        t,
+        second[:],
+        "two".cast<[]const u8>,
+        "the second body is preserved"
+    );
+    asserts::is_true(
+        t,
+        !hasThird and thirdError == none,
+        "EOF after complete messages is clean"
+    );
+}
+
+test reports_clean_eof_between_messages(&testing::UnitTest t) {
+    [0]u8 source = none;
+    usize position = 0;
+    streamReader := stream::Reader::init(
+        [&const source, &position](destination) => {
+            return read_source(source[:], &position, 0, destination);
+        }
+    );
+    reader, constructionError := framing::FramedReader::fromReader(streamReader);
+    asserts::is_true(
+        t,
+        constructionError == none,
+        "the framed reader is constructed"
+    );
+    if constructionError != none {
+        return;
+    }
+
+    body, hasMessage, readError := reader.readMessage();
+    asserts::is_true(t, readError == none, "clean EOF is not an error");
+    asserts::is_true(t, !hasMessage, "clean EOF produces no message");
+    asserts::is_true(t, body.len() == 0, "clean EOF produces no body");
+}
+
+test rejects_missing_and_duplicate_content_length(&testing::UnitTest t) {
+    expect_error(
+        t,
+        "Content-Type: application/json\r\n\r\n{}",
+        framing::FramingError.MissingContentLength
+    );
+    expect_error(
+        t,
+        "Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
+        framing::FramingError.DuplicateContentLength
+    );
+}
+
+test rejects_invalid_headers_and_content_lengths(&testing::UnitTest t) {
+    expect_error(
+        t,
+        "broken-header\r\n\r\n",
+        framing::FramingError.InvalidHeader
+    );
+    expect_error(
+        t,
+        "Content-Length:\r\n\r\n",
+        framing::FramingError.InvalidContentLength
+    );
+    expect_error(
+        t,
+        "Content-Length: +1\r\n\r\nx",
+        framing::FramingError.InvalidContentLength
+    );
+    expect_error(
+        t,
+        "Content-Length: nope\r\n\r\n",
+        framing::FramingError.InvalidContentLength
+    );
+}
+
+test rejects_oversized_bodies_before_allocating(&testing::UnitTest t) {
+    expect_error(
+        t,
+        "Content-Length: 67108865\r\n\r\n",
+        framing::FramingError.BodyTooLarge
+    );
+}
+
+test reports_truncated_headers_and_bodies(&testing::UnitTest t) {
+    expect_error(
+        t,
+        "Content-Length: 4\r\n",
+        framing::FramingError.TruncatedMessage
+    );
+    expect_error(
+        t,
+        "Content-Length: 4\r\n\r\nabc",
+        framing::FramingError.TruncatedMessage
+    );
+}
+
+test rejects_oversized_header_sections(&testing::UnitTest t) {
+    string input = "X-Test: ";
+    loop usize index = 0; index < 8192; index++ {
+        input = input + "a";
+    }
+
+    expect_error(
+        t,
+        input.view(),
+        framing::FramingError.HeaderTooLarge
+    );
+}
+
+test writer_emits_content_length_and_body(&testing::UnitTest t) {
+    [64]u8 destination = none;
+    usize position = 0;
+    streamWriter := stream::Writer::init(
+        [&destination, &position](source) => {
+            loop usize index = 0; index < source.len(); index++ {
+                destination[position + index] = source[index];
+            }
+            position = position + source.len();
+            return (source.len(), none);
+        }
+    );
+    writer, constructionError :=
+        framing::FramedWriter::fromWriter(streamWriter);
+    asserts::is_true(
+        t,
+        constructionError == none,
+        "the framed writer is constructed"
+    );
+    if constructionError != none {
+        return;
+    }
+
+    writeError := writer.writeMessage("hello".cast<[]const u8>);
+    flushError := writer.flush();
+
+    asserts::is_true(
+        t,
+        writeError == none and flushError == none,
+        "writing and flushing the frame succeeds"
+    );
+    asserts::bytes_equal(
+        t,
+        destination[:position],
+        "Content-Length: 5\r\n\r\nhello".cast<[]const u8>,
+        "the writer emits the canonical frame"
+    );
+}
+
+test writer_counts_utf8_bytes_and_supports_empty_bodies(
+    &testing::UnitTest t
+) {
+    [128]u8 destination = none;
+    usize position = 0;
+    streamWriter := stream::Writer::init(
+        [&destination, &position](source) => {
+            loop usize index = 0; index < source.len(); index++ {
+                destination[position + index] = source[index];
+            }
+            position = position + source.len();
+            return (source.len(), none);
+        }
+    );
+    writer, constructionError :=
+        framing::FramedWriter::fromWriter(streamWriter);
+    if constructionError != none {
+        asserts::is_true(t, false, "the framed writer is constructed");
+        return;
+    }
+
+    unicodeError := writer.writeMessage("flecha →".cast<[]const u8>);
+    emptyError := writer.writeMessage("".cast<[]const u8>);
+    flushError := writer.flush();
+
+    asserts::is_true(
+        t,
+        unicodeError == none and emptyError == none and flushError == none,
+        "both frames are written and flushed"
+    );
+    asserts::bytes_equal(
+        t,
+        destination[:position],
+        (
+            "Content-Length: 10\r\n\r\nflecha →" +
+            "Content-Length: 0\r\n\r\n"
+        ).view().cast<[]const u8>,
+        "lengths use UTF-8 bytes and consecutive frames remain ordered"
+    );
+}
+
+test writer_completes_partial_underlying_writes(&testing::UnitTest t) {
+    [64]u8 destination = none;
+    usize position = 0;
+    streamWriter := stream::Writer::init(
+        [&destination, &position](source) => {
+            usize count = source.len();
+            if count > 2 {
+                count = 2;
+            }
+            loop usize index = 0; index < count; index++ {
+                destination[position + index] = source[index];
+            }
+            position = position + count;
+            return (count, none);
+        }
+    );
+    writer, constructionError :=
+        framing::FramedWriter::fromWriter(streamWriter);
+    if constructionError != none {
+        asserts::is_true(t, false, "the framed writer is constructed");
+        return;
+    }
+
+    writeError := writer.writeMessage("test".cast<[]const u8>);
+    flushError := writer.flush();
+
+    asserts::is_true(
+        t,
+        writeError == none and flushError == none,
+        "partial writes are completed"
+    );
+    asserts::bytes_equal(
+        t,
+        destination[:position],
+        "Content-Length: 4\r\n\r\ntest".cast<[]const u8>,
+        "partial writes preserve every frame byte"
+    );
+}
+
+test writer_propagates_output_failures(&testing::UnitTest t) {
+    streamWriter := stream::Writer::init(
+        [](source) => {
+            return (none, io_errors::IoError.WriteFailed);
+        }
+    );
+    writer, constructionError :=
+        framing::FramedWriter::fromWriter(streamWriter);
+    if constructionError != none {
+        asserts::is_true(t, false, "the framed writer is constructed");
+        return;
+    }
+
+    writeError := writer.writeMessage("x".cast<[]const u8>);
+    flushError := writer.flush();
+
+    asserts::is_true(
+        t,
+        writeError == io_errors::IoError.WriteFailed or
+            flushError == io_errors::IoError.WriteFailed,
+        "the underlying output error reaches the caller"
+    );
+}

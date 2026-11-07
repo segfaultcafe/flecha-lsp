@@ -1,0 +1,10 @@
+module framing;
+
+const usize MAX_HEADER_BYTES = 8 * 1024;
+const usize OUTPUT_BUFFER_BYTES = 8 * 1024;
+const usize MAX_BODY_BYTES = 64 * 1024 * 1024;
+
+const u8 CR = 13;
+const u8 LF = 10;
+
+const stringv CONTENT_LENGTH = "Content-Length";
