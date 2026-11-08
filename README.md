@@ -1,169 +1,175 @@
 # Flecha LSP
 
-`flecha-lsp` is an experimental language server for the Flecha programming
-language, written in Flecha itself.
+`flecha-lsp` is an experimental Language Server Protocol implementation for
+Flecha, written in Flecha. The current vertical slice publishes compiler
+diagnostics for unsaved files while keeping all parsing and semantic analysis
+inside the Flecha compiler.
 
-The server will implement the Language Server Protocol (LSP) for editors while
-delegating language intelligence to the Flecha compiler selected by each
-project. This keeps editor integration independent from compiler releases and
-avoids duplicating Flecha's parser and semantic rules in the language server.
+## What works
 
-> [!IMPORTANT]
-> The project is currently in its bootstrap phase. JSON serialization and
-> deserialization have been validated with Flecha 0.3.1, but the executable is
-> not yet a usable language server.
+- LSP/JSON-RPC 2.0 over standard input and standard output;
+- `Content-Length` framing, including partial reads and consecutive messages;
+- `initialize`, `initialized`, `shutdown`, and `exit` lifecycle messages;
+- full-document `textDocument/didOpen`, `textDocument/didChange`, and
+  `textDocument/didClose` synchronization;
+- syntax and semantic diagnostics for editor buffers, including unsaved text;
+- conversion from compiler UTF-8 byte offsets to LSP UTF-16 positions;
+- `file://` URI decoding;
+- optional Longbow `target/package-graph.json` discovery; and
+- compiler selection through `FLECHA_COMPILER`.
 
-## Goals
+The server currently advertises only:
 
-- Implement the editor-facing LSP server in Flecha.
-- Keep `flecha-lsp` independently versioned from the Flecha compiler.
-- Use the compiler chosen by the workspace as the source of language truth.
-- Support unsaved documents through in-memory source overlays.
-- Begin with diagnostics, then add hover, definition, references, and
-  completion.
-- Exercise Flecha and its standard library through a substantial real-world
-  tool.
+```json
+{
+  "capabilities": {
+    "textDocumentSync": 1
+  }
+}
+```
+
+`textDocumentSync: 1` means full synchronization. Each change must contain one
+complete replacement document; incremental range edits are not accepted.
+
+Completion, hover, go-to-definition, references, rename, formatting, semantic
+tokens, and other language features are not implemented yet.
 
 ## Architecture
 
 ```text
 Editor
-  │ LSP over JSON-RPC and stdin/stdout
+  │ LSP / JSON-RPC 2.0 / Content-Length / stdio
   ▼
 flecha-lsp
-  ├── message framing
-  ├── JSON-RPC dispatch
-  ├── LSP lifecycle and document state
-  └── analyzer client
-          │ versioned analysis protocol over child-process pipes
+  ├── transport and JSON-RPC dispatch
+  ├── LSP lifecycle and full-document synchronization
+  ├── URI and UTF-16 position conversion
+  └── analyzer protocol client
+          │ JSON-RPC 2.0 / Content-Length / private pipes
           ▼
       flecha analyze --stdio
-          └── tokenizer, parser, module loader, and semantic analyzer
+          ├── source overlays for unsaved documents
+          ├── project and dependency loading
+          └── parser and semantic analyzer
 ```
 
-`flecha-lsp` is a separate binary. It will start the workspace compiler in an
-analysis-server mode and communicate with it through private pipes. There is no
-global daemon, TCP listener, or binary linkage to the compiler's C++ internals.
+`flecha-lsp` starts `flecha analyze --stdio` as a child process. It forwards
+full document text to the compiler, requests diagnostics synchronously, then
+translates the compiler's byte ranges into LSP ranges. The LSP does not link to
+the compiler's C++ implementation and does not duplicate its frontend.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete design and delivery
-plan.
+Standard output is reserved exclusively for LSP frames. Logs and failures go
+to standard error.
 
-## Current status
+See [ARCHITECTURE.md](ARCHITECTURE.md) for protocol and module details and
+[docs/editors.md](docs/editors.md) for editor setup.
 
-The repository currently proves that a Flecha program can:
+## Requirements
 
-- consume the public `flecha/json` package;
-- deserialize JSON into a decorated Flecha structure;
-- represent owning arrays in protocol structures; and
-- build and run with the released Flecha 0.3.1 toolchain.
+- Flecha and Longbow 0.3.1, or a compatible 0.3.x toolchain;
+- a Flecha compiler that implements `flecha analyze --stdio` protocol 1.0;
+- access to the Flecha registry when `flecha/json` is not already cached; and
+- a workspace exposed to the editor as a local `file://` URI.
 
-The next milestone is an editor-independent JSON-RPC loop that reads a framed
-`initialize` request and writes a valid response.
-
-## Prerequisites
-
-- Flecha and Longbow 0.3.1
-- A platform supported by the Flecha toolchain
-- Access to the public Flecha package registry for the first dependency fetch
-
-Verify the toolchain:
+Verify the tools and analyzer command:
 
 ```sh
 flecha --version
 longbow --version
+flecha analyze --stdio
 ```
 
-Both commands should report compatible versions.
+The last command waits for framed protocol input. Appearing idle is expected;
+terminate that manual probe with Ctrl-C.
 
-## Building
+By default the server resolves `flecha` from `PATH`. To select another compiler:
 
-Fetch the locked dependencies and build the program:
+```sh
+export FLECHA_COMPILER=/absolute/path/to/flecha
+```
+
+## Build and test
 
 ```sh
 longbow fetch
 longbow build
+longbow test --verbose
 ```
 
-During development, use:
+The executable is written to `target/flecha-lsp`. To install it for the current
+user:
 
 ```sh
-longbow check
-longbow test
-longbow run
+install -Dm755 target/flecha-lsp "$HOME/.local/bin/flecha-lsp"
 ```
 
-The current `main.fl` runs a JSON deserialization proof rather than an LSP
-server.
+Ensure `$HOME/.local/bin` is in the environment inherited by the editor.
 
-## Planned repository layout
+`longbow run` starts the language server, so it also waits for framed LSP input;
+it is not an interactive command-line interface.
+
+## Project discovery
+
+On `initialize`, the server converts the client's `rootUri` to an absolute
+workspace path and checks exactly:
+
+```text
+<workspace>/target/package-graph.json
+```
+
+If the file exists, its absolute path is sent to the analyzer so imports and
+package identities use Longbow's resolved graph. The LSP never runs a build to
+create it. Run `longbow build` in the Flecha project before starting the editor
+when dependency-aware diagnostics are required.
+
+If the graph is absent, initialization continues and the analyzer uses its
+workspace-based fallback behavior.
+
+## Diagnostics flow
+
+For an open or changed document, the server performs this lockstep sequence:
+
+1. decode the `file://` URI and full document text;
+2. send `document/open` or `document/change` to the analyzer;
+3. request `document/diagnostics`;
+4. convert `startByte` and `endByte` to zero-based LSP line/UTF-16 positions;
+5. publish `textDocument/publishDiagnostics` with the document version.
+
+On `didClose`, the overlay is removed from the analyzer and the LSP publishes
+an empty diagnostic list for that URI.
+
+## Current limitations
+
+- diagnostics are the only language-intelligence feature;
+- synchronization is full-document only and accepts exactly one content change;
+- analysis is sequential and blocks handling of the next editor message;
+- only local absolute `file://` workspace and document URIs are accepted;
+- UTF-16 is always used for outgoing diagnostic positions;
+- there is no cancellation, background debounce, analyzer restart, or
+  multi-workspace process pool;
+- lifecycle ordering is tracked but not yet exhaustively rejected;
+- analyzer snapshot versions are parsed, but stale-result suppression is not
+  implemented yet; and
+- VS Code requires a client extension; this repository does not ship one yet.
+
+## Repository layout
 
 ```text
 src/
-├── main.fl
-├── transport/
-│   └── framing.fl
-├── rpc/
-│   ├── message.fl
-│   ├── reader.fl
-│   ├── writer.fl
-│   └── dispatcher.fl
-├── lsp/
-│   ├── server.fl
-│   ├── initialize.fl
-│   ├── documents.fl
-│   └── diagnostics.fl
-├── text/
-│   └── positions.fl
-└── analyzer/
-    ├── client.fl
-    └── protocol.fl
+├── main.fl          # starts the analyzer child and owns process cleanup
+├── transport/       # Content-Length reader and writer
+├── rpc/             # generic JSON-RPC envelopes
+├── lsp/             # params, file URIs, and UTF-16 positions
+├── project/         # optional Longbow package-graph discovery
+├── analyzer/        # private compiler protocol client and diagnostic DTOs
+└── server/          # lifecycle, dispatch, and diagnostic publication
 ```
-
-## Delivery roadmap
-
-1. `Content-Length` message framing with malformed-input and fragmentation
-   tests.
-2. JSON-RPC requests, notifications, responses, and errors.
-3. LSP `initialize`, `initialized`, `shutdown`, and `exit` lifecycle.
-4. Full-document synchronization for open, changed, and closed files.
-5. A versioned `flecha analyze --stdio` protocol in the compiler.
-6. Syntax and semantic diagnostics for in-memory documents.
-7. Hover, go-to-definition, references, and completion.
-8. Incremental synchronization, cancellation, and concurrent analysis when
-   the language/runtime can support them cleanly.
-
-## Protocol discipline
-
-Standard output is reserved exclusively for LSP messages. Diagnostics and
-debug logs must be written to standard error. A single stray line on standard
-output corrupts the editor connection.
-
-The initial implementation will be sequential because Flecha 0.3.1 exposes
-blocking standard streams and child-process pipes. The protocol is designed so
-nonblocking I/O and cancellation can be added later without changing editor
-behavior.
-
-## Versioning
-
-Three versions are intentionally independent:
-
-```text
-flecha-lsp version
-Flecha compiler version
-compiler analysis protocol version
-```
-
-The LSP negotiates the analysis protocol with the workspace compiler. A
-compatible protocol matters; matching product versions do not.
 
 ## Contributing
 
-Keep early changes small and vertically testable. In particular:
-
-- do not write logs to standard output;
-- do not expose compiler AST objects through the analysis protocol;
-- add tests for fragmented and malformed protocol input;
-- preserve document versions in asynchronous-looking results; and
-- prefer a working diagnostic path over broad, partially implemented LSP
-  coverage.
-
+- Never write logs to standard output.
+- Keep the compiler as the language authority.
+- Preserve raw JSON-RPC IDs and notification semantics.
+- Add protocol tests for malformed, fragmented, and non-ASCII input.
+- Extend the compiler analysis protocol with stable data, not compiler AST or
+  C++ implementation objects.
