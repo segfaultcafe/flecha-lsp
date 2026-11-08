@@ -1,0 +1,232 @@
+module lsp;
+
+@imports :: lib::json::json;
+
+(InitializeParams, error) InitializeParams::parse([]const u8 source) {
+    reader := json::Reader::init(source);
+    err := reader.beginObject();
+    if err != none {
+        return (none, LspError.InvalidParams);
+    }
+
+    string rootUri = none;
+    bool hasRootUri;
+    more, fieldErr := reader.nextObjectField();
+    while fieldErr == none and more {
+        if reader.keyIs("rootUri") {
+            rootUri, fieldErr = reader.readString();
+            hasRootUri = fieldErr == none;
+        } else {
+            fieldErr = reader.skipValue();
+        }
+        if fieldErr == none {
+            more, fieldErr = reader.nextObjectField();
+        }
+    }
+
+    if fieldErr != none or reader.finish() != none or !hasRootUri {
+        return (none, LspError.InvalidParams);
+    }
+    workspace, uriErr := file_uri_to_path(rootUri.view());
+    if uriErr != none {
+        return (none, uriErr);
+    }
+    return (build InitializeParams {
+        self.workspaceValue = workspace;
+    }, none);
+}
+
+(DocumentUpdate, error) DocumentUpdate::parseOpen([]const u8 source) {
+    reader := json::Reader::init(source);
+    beginErr := reader.beginObject();
+    if beginErr != none {
+        return (none, LspError.InvalidParams);
+    }
+
+    string uri = none;
+    string text = none;
+    i64 version = none;
+    bool hasUri;
+    bool hasText;
+    bool hasVersion;
+
+    more, err := reader.nextObjectField();
+    while err == none and more {
+        if reader.keyIs("textDocument") {
+            err = reader.beginObject();
+            childMore, childErr := reader.nextObjectField();
+            while childErr == none and childMore {
+                if reader.keyIs("uri") {
+                    uri, childErr = reader.readString();
+                    hasUri = childErr == none;
+                } else if reader.keyIs("version") {
+                    childErr = reader.read(&version);
+                    hasVersion = childErr == none;
+                } else if reader.keyIs("text") {
+                    text, childErr = reader.readString();
+                    hasText = childErr == none;
+                } else {
+                    childErr = reader.skipValue();
+                }
+                if childErr == none {
+                    childMore, childErr = reader.nextObjectField();
+                }
+            }
+            err = childErr;
+        } else {
+            err = reader.skipValue();
+        }
+        if err == none {
+            more, err = reader.nextObjectField();
+        }
+    }
+
+    if err != none or reader.finish() != none or !hasUri or !hasVersion or
+        !hasText or version < 0 {
+        return (none, LspError.InvalidParams);
+    }
+    return DocumentUpdate::create(uri, version, text);
+}
+
+(DocumentUpdate, error) DocumentUpdate::parseChange([]const u8 source) {
+    reader := json::Reader::init(source);
+    beginErr := reader.beginObject();
+    if beginErr != none {
+        return (none, LspError.InvalidParams);
+    }
+
+    string uri = none;
+    string text = none;
+    i64 version = none;
+    bool hasUri;
+    bool hasVersion;
+    bool hasText;
+    bool incremental;
+    usize changeCount;
+
+    more, err := reader.nextObjectField();
+    while err == none and more {
+        if reader.keyIs("textDocument") {
+            err = reader.beginObject();
+            childMore, childErr := reader.nextObjectField();
+            while childErr == none and childMore {
+                if reader.keyIs("uri") {
+                    uri, childErr = reader.readString();
+                    hasUri = childErr == none;
+                } else if reader.keyIs("version") {
+                    childErr = reader.read(&version);
+                    hasVersion = childErr == none;
+                } else {
+                    childErr = reader.skipValue();
+                }
+                if childErr == none {
+                    childMore, childErr = reader.nextObjectField();
+                }
+            }
+            err = childErr;
+        } else if reader.keyIs("contentChanges") {
+            err = reader.beginArray();
+            changeMore, changeErr := reader.nextArrayElement();
+            while changeErr == none and changeMore {
+                changeCount++;
+                changeErr = reader.beginObject();
+                fieldMore, itemErr := reader.nextObjectField();
+                while itemErr == none and fieldMore {
+                    if reader.keyIs("text") {
+                        text, itemErr = reader.readString();
+                        hasText = itemErr == none;
+                    } else if reader.keyIs("range") {
+                        incremental = true;
+                        itemErr = reader.skipValue();
+                    } else {
+                        itemErr = reader.skipValue();
+                    }
+                    if itemErr == none {
+                        fieldMore, itemErr = reader.nextObjectField();
+                    }
+                }
+                changeErr = itemErr;
+                if changeErr == none {
+                    changeMore, changeErr = reader.nextArrayElement();
+                }
+            }
+            err = changeErr;
+        } else {
+            err = reader.skipValue();
+        }
+        if err == none {
+            more, err = reader.nextObjectField();
+        }
+    }
+
+    if err != none or reader.finish() != none or !hasUri or !hasVersion or
+        !hasText or version < 0 or changeCount != 1 {
+        return (none, LspError.InvalidParams);
+    }
+    if incremental {
+        return (none, LspError.IncrementalChange);
+    }
+    return DocumentUpdate::create(uri, version, text);
+}
+
+(DocumentClose, error) DocumentClose::parse([]const u8 source) {
+    reader := json::Reader::init(source);
+    beginErr := reader.beginObject();
+    if beginErr != none {
+        return (none, LspError.InvalidParams);
+    }
+
+    string uri = none;
+    bool hasUri;
+    more, err := reader.nextObjectField();
+    while err == none and more {
+        if reader.keyIs("textDocument") {
+            err = reader.beginObject();
+            childMore, childErr := reader.nextObjectField();
+            while childErr == none and childMore {
+                if reader.keyIs("uri") {
+                    uri, childErr = reader.readString();
+                    hasUri = childErr == none;
+                } else {
+                    childErr = reader.skipValue();
+                }
+                if childErr == none {
+                    childMore, childErr = reader.nextObjectField();
+                }
+            }
+            err = childErr;
+        } else {
+            err = reader.skipValue();
+        }
+        if err == none {
+            more, err = reader.nextObjectField();
+        }
+    }
+
+    if err != none or reader.finish() != none or !hasUri {
+        return (none, LspError.InvalidParams);
+    }
+    path, uriErr := file_uri_to_path(uri.view());
+    if uriErr != none {
+        return (none, uriErr);
+    }
+    return (build DocumentClose {
+        self.pathValue = path;
+    }, none);
+}
+
+private (DocumentUpdate, error) DocumentUpdate::create(
+    string uri,
+    i64 version,
+    string text
+) {
+    path, uriErr := file_uri_to_path(uri.view());
+    if uriErr != none {
+        return (none, uriErr);
+    }
+    return (build DocumentUpdate {
+        self.pathValue = path;
+        self.versionValue = version;
+        self.textValue = text;
+    }, none);
+}

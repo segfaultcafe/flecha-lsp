@@ -1,0 +1,43 @@
+module lsp;
+
+export error LspError {
+    InvalidParams,
+    UnsupportedUri,
+    IncrementalChange,
+}
+
+export structure InitializeParams {
+    private string workspaceValue;
+};
+
+export structure DocumentUpdate {
+    private {
+        string pathValue;
+        i64 versionValue;
+        string textValue;
+    }
+};
+
+export structure DocumentClose {
+    private string pathValue;
+};
+
+stringv InitializeParams::workspace(&const self) <-self {
+    return self->workspaceValue.view();
+}
+
+stringv DocumentUpdate::path(&const self) <-self {
+    return self->pathValue.view();
+}
+
+i64 DocumentUpdate::version(&const self) {
+    return self->versionValue;
+}
+
+stringv DocumentUpdate::text(&const self) <-self {
+    return self->textValue.view();
+}
+
+stringv DocumentClose::path(&const self) <-self {
+    return self->pathValue.view();
+}

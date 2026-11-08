@@ -1,0 +1,88 @@
+module lsp_test;
+
+@imports
+    :: root::lsp::lsp
+    :: lib::std::tests::{asserts, testing};
+
+test parses_initialize_and_file_uris(&testing::UnitTest t) {
+    params, err := lsp::InitializeParams::parse(
+        "{\"rootUri\":\"file:///home/alex/My%20Project\",\"capabilities\":{}}"
+            .cast<[]const u8>
+    );
+    asserts::is_true(t, err == none, "initialize params parse");
+    if err == none {
+        asserts::string_equal(
+            t,
+            params.workspace(),
+            "/home/alex/My Project",
+            "file URI percent encoding is decoded"
+        );
+    }
+
+    _, unsupportedErr := lsp::InitializeParams::parse(
+        "{\"rootUri\":\"https://example.com/project\"}".cast<[]const u8>
+    );
+    asserts::is_true(
+        t,
+        unsupportedErr == lsp::LspError.UnsupportedUri,
+        "non-file workspaces are rejected"
+    );
+}
+
+test parses_full_document_open_change_and_close(&testing::UnitTest t) {
+    opened, openErr := lsp::DocumentUpdate::parseOpen(
+        (
+            "{\"textDocument\":{\"uri\":\"file:///workspace/main.fl\"," +
+            "\"languageId\":\"flecha\",\"version\":4," +
+            "\"text\":\"module main;\"}}"
+        ).view().cast<[]const u8>
+    );
+    changed, changeErr := lsp::DocumentUpdate::parseChange(
+        (
+            "{\"textDocument\":{\"uri\":\"file:///workspace/main.fl\"," +
+            "\"version\":5},\"contentChanges\":[{" +
+            "\"text\":\"module main;\\nvoid main() {}\"}]}"
+        ).view().cast<[]const u8>
+    );
+    closed, closeErr := lsp::DocumentClose::parse(
+        "{\"textDocument\":{\"uri\":\"file:///workspace/main.fl\"}}"
+            .cast<[]const u8>
+    );
+
+    asserts::is_true(t, openErr == none, "didOpen params parse");
+    if openErr == none {
+        asserts::string_equal(t, opened.path(), "/workspace/main.fl", "open path");
+        asserts::is_true(t, opened.version() == 4, "open version");
+        asserts::string_equal(t, opened.text(), "module main;", "open text");
+    }
+    asserts::is_true(t, changeErr == none, "didChange params parse");
+    if changeErr == none {
+        asserts::is_true(t, changed.version() == 5, "change version");
+        asserts::string_equal(
+            t,
+            changed.text(),
+            "module main;\nvoid main() {}",
+            "full replacement text"
+        );
+    }
+    asserts::is_true(t, closeErr == none, "didClose params parse");
+    if closeErr == none {
+        asserts::string_equal(t, closed.path(), "/workspace/main.fl", "close path");
+    }
+}
+
+test rejects_incremental_document_changes(&testing::UnitTest t) {
+    _, err := lsp::DocumentUpdate::parseChange(
+        (
+            "{\"textDocument\":{\"uri\":\"file:///workspace/main.fl\"," +
+            "\"version\":2},\"contentChanges\":[{\"range\":{" +
+            "\"start\":{\"line\":0,\"character\":0}," +
+            "\"end\":{\"line\":0,\"character\":1}},\"text\":\"x\"}]}"
+        ).view().cast<[]const u8>
+    );
+    asserts::is_true(
+        t,
+        err == lsp::LspError.IncrementalChange,
+        "the full-sync bridge rejects incremental edits"
+    );
+}
