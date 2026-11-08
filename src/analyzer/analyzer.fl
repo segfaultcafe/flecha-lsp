@@ -1,0 +1,17 @@
+module analyzer;
+
+@imports :: root::transport::framing;
+
+export error AnalyzerError {
+    UnexpectedEof,
+    InvalidResponse,
+    RemoteError,
+}
+
+export structure Client {
+    private {
+        framing::FramedReader input;
+        framing::FramedWriter output;
+        i64 nextIdValue;
+    }
+};

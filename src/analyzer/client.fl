@@ -1,0 +1,213 @@
+module analyzer;
+
+@imports
+    :: root::transport::framing
+    :: lib::json::json
+    :: lib::std::io::stream;
+
+(Client, error) Client::fromStreams(
+    stream::Reader input,
+    stream::Writer output
+) <-(input, output) {
+    reader, readerErr := framing::FramedReader::fromReader(input);
+    if readerErr != none {
+        return (none, readerErr);
+    }
+
+    writer, writerErr := framing::FramedWriter::fromWriter(output);
+    if writerErr != none {
+        return (none, writerErr);
+    }
+
+    return (build Client {
+        self.input = reader;
+        self.output = writer;
+        self.nextIdValue = 1;
+    }, none);
+}
+
+error Client::initialize(&self, stringv workspace) {
+    const i64 ID = self->takeId();
+    writer := json::Writer::init();
+    err := Client::beginRequest(&writer, ID, "initialize");
+    if err == none { err = writer.key("params"); }
+    if err == none { err = writer.beginObject(); }
+    if err == none { err = writer.key("protocolMajor"); }
+    if err == none { err = writer.write(1); }
+    if err == none { err = writer.key("protocolMinor"); }
+    if err == none { err = writer.write(0); }
+    if err == none { err = writer.key("workspace"); }
+    if err == none { err = writer.write(workspace); }
+    if err == none { err = writer.endObject(); }
+    return self->finishRequest(&writer, ID, err);
+}
+
+error Client::openDocument(
+    &self,
+    stringv path,
+    i64 version,
+    stringv text
+) {
+    return self->updateDocument("document/open", path, version, text);
+}
+
+error Client::changeDocument(
+    &self,
+    stringv path,
+    i64 version,
+    stringv text
+) {
+    return self->updateDocument("document/change", path, version, text);
+}
+
+error Client::closeDocument(&self, stringv path) {
+    const i64 ID = self->takeId();
+    writer := json::Writer::init();
+    err := Client::beginRequest(&writer, ID, "document/close");
+    if err == none { err = writer.key("params"); }
+    if err == none { err = writer.beginObject(); }
+    if err == none { err = writer.key("path"); }
+    if err == none { err = writer.write(path); }
+    if err == none { err = writer.endObject(); }
+    return self->finishRequest(&writer, ID, err);
+}
+
+error Client::shutdown(&self) {
+    const i64 ID = self->takeId();
+    writer := json::Writer::init();
+    err := Client::beginRequest(&writer, ID, "shutdown");
+    if err == none { err = writer.key("params"); }
+    if err == none { err = writer.beginObject(); }
+    if err == none { err = writer.endObject(); }
+    return self->finishRequest(&writer, ID, err);
+}
+
+private error Client::updateDocument(
+    &self,
+    stringv method,
+    stringv path,
+    i64 version,
+    stringv text
+) {
+    const i64 ID = self->takeId();
+    writer := json::Writer::init();
+    err := Client::beginRequest(&writer, ID, method);
+    if err == none { err = writer.key("params"); }
+    if err == none { err = writer.beginObject(); }
+    if err == none { err = writer.key("path"); }
+    if err == none { err = writer.write(path); }
+    if err == none { err = writer.key("version"); }
+    if err == none { err = writer.write(version); }
+    if err == none { err = writer.key("text"); }
+    if err == none { err = writer.write(text); }
+    if err == none { err = writer.endObject(); }
+    return self->finishRequest(&writer, ID, err);
+}
+
+private error Client::beginRequest(
+    &json::Writer writer,
+    i64 id,
+    stringv method
+) {
+    err := writer->beginObject();
+    if err == none { err = writer->key("jsonrpc"); }
+    if err == none { err = writer->write("2.0"); }
+    if err == none { err = writer->key("id"); }
+    if err == none { err = writer->write(id); }
+    if err == none { err = writer->key("method"); }
+    if err == none { err = writer->write(method); }
+    return err;
+}
+
+private error Client::finishRequest(
+    &self,
+    &json::Writer writer,
+    i64 id,
+    error previous
+) {
+    error err = previous;
+    if err == none { err = writer->endObject(); }
+    if err != none {
+        return err;
+    }
+
+    body, serializationErr := writer->finish();
+    if serializationErr != none {
+        return serializationErr;
+    }
+    writeErr := self->output.writeMessage(body[:]);
+    if writeErr != none {
+        return writeErr;
+    }
+    flushErr := self->output.flush();
+    if flushErr != none {
+        return flushErr;
+    }
+
+    response, hasResponse, readErr := self->input.readMessage();
+    if readErr != none {
+        return readErr;
+    }
+    if !hasResponse {
+        return AnalyzerError.UnexpectedEof;
+    }
+    return Client::validateResponse(response[:], id);
+}
+
+private error Client::validateResponse([]const u8 source, i64 expectedId) {
+    reader := json::Reader::init(source);
+    err := reader.beginObject();
+    if err != none {
+        return AnalyzerError.InvalidResponse;
+    }
+
+    bool hasVersion;
+    bool hasId;
+    bool hasResult;
+    bool hasError;
+    i64 responseId = none;
+
+    more, fieldErr := reader.nextObjectField();
+    while fieldErr == none and more {
+        if reader.keyIs("jsonrpc") {
+            version, versionErr := reader.readString();
+            if versionErr != none or version.view() != "2.0" {
+                return AnalyzerError.InvalidResponse;
+            }
+            hasVersion = true;
+        } else if reader.keyIs("id") {
+            fieldErr = reader.read(&responseId);
+            if fieldErr != none {
+                return AnalyzerError.InvalidResponse;
+            }
+            hasId = true;
+        } else if reader.keyIs("result") {
+            fieldErr = reader.skipValue();
+            hasResult = fieldErr == none;
+        } else if reader.keyIs("error") {
+            fieldErr = reader.skipValue();
+            hasError = fieldErr == none;
+        } else {
+            fieldErr = reader.skipValue();
+        }
+
+        if fieldErr == none {
+            more, fieldErr = reader.nextObjectField();
+        }
+    }
+
+    if fieldErr != none or reader.finish() != none or !hasVersion or
+        !hasId or responseId != expectedId or hasResult == hasError {
+        return AnalyzerError.InvalidResponse;
+    }
+    if hasError {
+        return AnalyzerError.RemoteError;
+    }
+    return none;
+}
+
+private i64 Client::takeId(&self) {
+    const i64 RESULT = self->nextIdValue;
+    self->nextIdValue++;
+    return RESULT;
+}

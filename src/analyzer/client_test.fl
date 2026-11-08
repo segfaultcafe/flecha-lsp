@@ -1,0 +1,134 @@
+module analyzer_test;
+
+@imports
+    :: root::analyzer::analyzer
+    :: lib::std::io::stream
+    :: lib::std::text::strings
+    :: lib::std::tests::{asserts, testing};
+
+(usize, error) read_source(
+    []const u8 source,
+    &usize position,
+    []u8 destination
+) {
+    usize count = destination.len();
+    const usize REMAINING = source.len() - *position;
+    if count > REMAINING {
+        count = REMAINING;
+    }
+    loop usize index = 0; index < count; index++ {
+        destination[index] = source[*position + index];
+    }
+    *position = *position + count;
+    return (count, none);
+}
+
+test translates_document_operations_to_private_requests(
+    &testing::UnitTest t
+) {
+    const stringv RESPONSE_1 =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}";
+    const stringv RESPONSE_2 =
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"status\":\"applied\"}}";
+    const stringv RESPONSE_3 =
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"status\":\"applied\"}}";
+    const stringv RESPONSE_4 =
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"closed\":true}}";
+    const stringv RESPONSE_5 =
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"result\":null}";
+    responses := (
+        "Content-Length: 36\r\n\r\n" + RESPONSE_1 +
+        "Content-Length: 54\r\n\r\n" + RESPONSE_2 +
+        "Content-Length: 54\r\n\r\n" + RESPONSE_3 +
+        "Content-Length: 49\r\n\r\n" + RESPONSE_4 +
+        "Content-Length: 38\r\n\r\n" + RESPONSE_5
+    );
+    responseBytes := responses.view().cast<[]const u8>;
+    usize responsePosition = 0;
+    input := stream::Reader::init(
+        [&const responseBytes, &responsePosition](destination) => {
+            return read_source(responseBytes, &responsePosition, destination);
+        }
+    );
+
+    [2048]u8 requests = none;
+    usize requestPosition = 0;
+    output := stream::Writer::init(
+        [&requests, &requestPosition](source) => {
+            loop usize index = 0; index < source.len(); index++ {
+                requests[requestPosition + index] = source[index];
+            }
+            requestPosition = requestPosition + source.len();
+            return (source.len(), none);
+        }
+    );
+
+    client, constructionErr := analyzer::Client::fromStreams(input, output);
+    if constructionErr != none {
+        asserts::is_true(t, false, "the analyzer client is constructed");
+        return;
+    }
+
+    initializeErr := client.initialize("/workspace");
+    openErr := client.openDocument("/workspace/main.fl", 1, "module main;");
+    changeErr := client.changeDocument(
+        "/workspace/main.fl",
+        2,
+        "module main;\nvoid main() {}"
+    );
+    closeErr := client.closeDocument("/workspace/main.fl");
+    shutdownErr := client.shutdown();
+
+    asserts::is_true(
+        t,
+        initializeErr == none and openErr == none and changeErr == none and
+            closeErr == none and shutdownErr == none,
+        "the complete private analyzer lifecycle succeeds"
+    );
+    asserts::is_true(
+        t,
+        requestPosition > 0,
+        "the client emits framed analyzer requests"
+    );
+    requestText := requests[:requestPosition].cast<stringv>;
+    asserts::is_true(
+        t,
+        strings::contains(requestText, "\"method\":\"initialize\"") and
+            strings::contains(requestText, "\"workspace\":\"/workspace\"") and
+            strings::contains(requestText, "\"method\":\"document/open\"") and
+            strings::contains(requestText, "\"version\":1") and
+            strings::contains(requestText, "\"method\":\"document/change\"") and
+            strings::contains(requestText, "\"version\":2") and
+            strings::contains(requestText, "\"method\":\"document/close\"") and
+            strings::contains(requestText, "\"method\":\"shutdown\""),
+        "LSP document operations map to the compiler protocol"
+    );
+}
+
+test rejects_remote_errors(&testing::UnitTest t) {
+    const stringv REMOTE =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32602,\"message\":\"bad\"}}";
+    responses := "Content-Length: 64\r\n\r\n" + REMOTE;
+    responseBytes := responses.view().cast<[]const u8>;
+    usize position = 0;
+    input := stream::Reader::init(
+        [&const responseBytes, &position](destination) => {
+            return read_source(responseBytes, &position, destination);
+        }
+    );
+    output := stream::Writer::init((source) => {
+        return (source.len(), none);
+    });
+
+    client, constructionErr := analyzer::Client::fromStreams(input, output);
+    if constructionErr != none {
+        asserts::is_true(t, false, "the analyzer client is constructed");
+        return;
+    }
+    err := client.initialize("/workspace");
+    asserts::is_true(
+        t,
+        err == analyzer::AnalyzerError.RemoteError,
+        "backend JSON-RPC errors are not mistaken for success"
+    );
+}
