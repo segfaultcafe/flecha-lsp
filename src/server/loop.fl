@@ -1,0 +1,91 @@
+module server;
+
+@imports
+    :: root::analyzer::analyzer
+    :: root::rpc::message
+    :: root::transport::framing
+    :: lib::std::io::stream;
+
+(Server, error) Server::fromStreams(
+    stream::Reader input,
+    stream::Writer output,
+    stream::Reader analyzerInput,
+    stream::Writer analyzerOutput
+) <-(input, output, analyzerInput, analyzerOutput) {
+    reader, readerErr := framing::FramedReader::fromReader(input);
+    if readerErr != none {
+        return (none, readerErr);
+    }
+
+    writer, writerErr := framing::FramedWriter::fromWriter(output);
+    if writerErr != none {
+        return (none, writerErr);
+    }
+
+    analyzerClient, analyzerErr := analyzer::Client::fromStreams(
+        analyzerInput,
+        analyzerOutput
+    );
+    if analyzerErr != none {
+        return (none, analyzerErr);
+    }
+
+    return (build Server {
+        self.input = reader;
+        self.output = writer;
+        self.analyzerClient = analyzerClient;
+        self.stateValue = ServerState.Uninitialized;
+    }, none);
+}
+
+error Server::run(&self) {
+    while self->stateValue != ServerState.Exited {
+        body, hasMessage, readErr := self->input.readMessage();
+        if readErr != none {
+            return readErr;
+        }
+        if !hasMessage {
+            return none;
+        }
+
+        request, parseErr := message::RpcRequest::parse(body[:]);
+        if parseErr != none {
+            response, responseErr := message::RpcResponse::failure(
+                message::RpcId::nullId(),
+                -32700,
+                "Parse error"
+            );
+            if responseErr != none {
+                return responseErr;
+            }
+            writeErr := self->writeResponse(&response);
+            if writeErr != none {
+                return writeErr;
+            }
+            proceed;
+        }
+
+        dispatchErr := self->dispatch(request);
+        if dispatchErr != none {
+            return dispatchErr;
+        }
+    }
+
+    return none;
+}
+
+private error Server::writeResponse(
+    &self,
+    &const message::RpcResponse response
+) {
+    body, serializationErr := response->serialize();
+    if serializationErr != none {
+        return serializationErr;
+    }
+
+    writeErr := self->output.writeMessage(body[:]);
+    if writeErr != none {
+        return writeErr;
+    }
+    return self->output.flush();
+}

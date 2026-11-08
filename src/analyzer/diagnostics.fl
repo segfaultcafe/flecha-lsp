@@ -1,0 +1,198 @@
+module analyzer;
+
+@imports
+    :: lib::json::json
+    :: lib::std::containers::collections as coll;
+
+(DiagnosticsSnapshot, error) Client::diagnostics(
+    &self,
+    stringv path
+) {
+    const i64 ID = self->takeId();
+    writer := json::Writer::init();
+    err := Client::beginRequest(&writer, ID, "document/diagnostics");
+    if err == none { err = writer.key("params"); }
+    if err == none { err = writer.beginObject(); }
+    if err == none { err = writer.key("path"); }
+    if err == none { err = writer.write(path); }
+    if err == none { err = writer.endObject(); }
+
+    response, exchangeErr := self->exchange(&writer, err);
+    if exchangeErr != none {
+        return (none, exchangeErr);
+    }
+    return DiagnosticsSnapshot::parseResponse(response[:], ID);
+}
+
+(DiagnosticsSnapshot, error) DiagnosticsSnapshot::parseResponse(
+    []const u8 source,
+    i64 expectedId
+) {
+    reader := json::Reader::init(source);
+    beginErr := reader.beginObject();
+    if beginErr != none {
+        return (none, AnalyzerError.InvalidResponse);
+    }
+
+    DiagnosticsSnapshot snapshot = none;
+    bool hasVersion;
+    bool hasId;
+    bool hasResult;
+    bool hasError;
+    i64 responseId = none;
+    more, err := reader.nextObjectField();
+    while err == none and more {
+        if reader.keyIs("jsonrpc") {
+            version, versionErr := reader.readString();
+            if versionErr != none or version.view() != "2.0" {
+                return (none, AnalyzerError.InvalidResponse);
+            }
+            hasVersion = true;
+        } else if reader.keyIs("id") {
+            err = reader.read(&responseId);
+            hasId = err == none;
+        } else if reader.keyIs("result") {
+            snapshot, err = DiagnosticsSnapshot::parseResult(&reader);
+            hasResult = err == none;
+        } else if reader.keyIs("error") {
+            err = reader.skipValue();
+            hasError = err == none;
+        } else {
+            err = reader.skipValue();
+        }
+        if err == none {
+            more, err = reader.nextObjectField();
+        }
+    }
+
+    if err != none or reader.finish() != none or !hasVersion or !hasId or
+        responseId != expectedId or hasResult == hasError {
+        return (none, AnalyzerError.InvalidResponse);
+    }
+    if hasError {
+        return (none, AnalyzerError.RemoteError);
+    }
+    return (snapshot, none);
+}
+
+private (DiagnosticsSnapshot, error) DiagnosticsSnapshot::parseResult(
+    &json::Reader reader
+) {
+    err := reader->beginObject();
+    if err != none {
+        return (none, AnalyzerError.InvalidResponse);
+    }
+
+    string path = none;
+    i64 version = none;
+    diagnostics := coll::Array<Diagnostic>::init();
+    bool hasPath;
+    bool hasVersion;
+    bool hasDiagnostics;
+
+    more, fieldErr := reader->nextObjectField();
+    while fieldErr == none and more {
+        if reader->keyIs("path") {
+            path, fieldErr = reader->readString();
+            hasPath = fieldErr == none;
+        } else if reader->keyIs("version") {
+            fieldErr = reader->read(&version);
+            hasVersion = fieldErr == none;
+        } else if reader->keyIs("diagnostics") {
+            fieldErr = reader->beginArray();
+            itemMore, itemErr := reader->nextArrayElement();
+            while itemErr == none and itemMore {
+                diagnostic, diagnosticErr := Diagnostic::parse(reader);
+                if diagnosticErr != none {
+                    return (none, diagnosticErr);
+                }
+                itemErr = diagnostics.push(diagnostic);
+                if itemErr == none {
+                    itemMore, itemErr = reader->nextArrayElement();
+                }
+            }
+            fieldErr = itemErr;
+            hasDiagnostics = fieldErr == none;
+        } else {
+            fieldErr = reader->skipValue();
+        }
+        if fieldErr == none {
+            more, fieldErr = reader->nextObjectField();
+        }
+    }
+
+    if fieldErr != none or !hasPath or !hasVersion or !hasDiagnostics {
+        return (none, AnalyzerError.InvalidResponse);
+    }
+    return (build DiagnosticsSnapshot {
+        self.pathValue = path;
+        self.versionValue = version;
+        self.diagnosticsValue = diagnostics;
+    }, none);
+}
+
+(Diagnostic, error) Diagnostic::parse(&json::Reader reader) {
+    err := reader->beginObject();
+    if err != none {
+        return (none, AnalyzerError.InvalidResponse);
+    }
+
+    string code = none;
+    string file = none;
+    string severityText = none;
+    string message = none;
+    usize startByte = none;
+    usize endByte = none;
+    bool hasCode, hasFile, hasStart, hasEnd, hasSeverity, hasMessage;
+
+    more, fieldErr := reader->nextObjectField();
+    while fieldErr == none and more {
+        if reader->keyIs("code") {
+            code, fieldErr = reader->readString();
+            hasCode = fieldErr == none;
+        } else if reader->keyIs("file") {
+            file, fieldErr = reader->readString();
+            hasFile = fieldErr == none;
+        } else if reader->keyIs("startByte") {
+            fieldErr = reader->read(&startByte);
+            hasStart = fieldErr == none;
+        } else if reader->keyIs("endByte") {
+            fieldErr = reader->read(&endByte);
+            hasEnd = fieldErr == none;
+        } else if reader->keyIs("severity") {
+            severityText, fieldErr = reader->readString();
+            hasSeverity = fieldErr == none;
+        } else if reader->keyIs("message") {
+            message, fieldErr = reader->readString();
+            hasMessage = fieldErr == none;
+        } else {
+            fieldErr = reader->skipValue();
+        }
+        if fieldErr == none {
+            more, fieldErr = reader->nextObjectField();
+        }
+    }
+
+    if fieldErr != none or !hasCode or !hasFile or !hasStart or !hasEnd or
+        !hasSeverity or !hasMessage or endByte < startByte {
+        return (none, AnalyzerError.InvalidResponse);
+    }
+
+    DiagnosticSeverity severity = DiagnosticSeverity.Error;
+    if severityText.view() == "warning" {
+        severity = DiagnosticSeverity.Warning;
+    } else if severityText.view() == "note" {
+        severity = DiagnosticSeverity.Note;
+    } else if severityText.view() != "error" {
+        return (none, AnalyzerError.InvalidResponse);
+    }
+
+    return (build Diagnostic {
+        self.codeValue = code;
+        self.fileValue = file;
+        self.startByteValue = startByte;
+        self.endByteValue = endByte;
+        self.severityValue = severity;
+        self.messageValue = message;
+    }, none);
+}

@@ -1,0 +1,302 @@
+module server_test;
+
+@imports
+    :: root::server::server
+    :: lib::std::io::stream
+    :: lib::std::text::strings
+    :: lib::std::tests::{asserts, testing};
+
+(usize, error) read_input(
+    []const u8 source,
+    &usize position,
+    []u8 destination
+) {
+    usize count = destination.len();
+    const usize REMAINING = source.len() - *position;
+    if count > REMAINING {
+        count = REMAINING;
+    }
+
+    loop usize index = 0; index < count; index++ {
+        destination[index] = source[*position + index];
+    }
+    *position = *position + count;
+    return (count, none);
+}
+
+test runs_initialize_shutdown_and_exit_end_to_end(
+    &testing::UnitTest t
+) {
+    const stringv INITIALIZE =
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"," +
+            "\"params\":{\"rootUri\":\"file:///workspace\"}}"
+        ).view();
+    const stringv INITIALIZED =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}";
+    const stringv DID_OPEN =
+        (
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\"," +
+            "\"params\":{\"textDocument\":{" +
+            "\"uri\":\"file:///workspace/main.fl\"," +
+            "\"languageId\":\"flecha\",\"version\":1," +
+            "\"text\":\"module main;\"}}}"
+        ).view();
+    const stringv DID_CHANGE =
+        (
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\"," +
+            "\"params\":{\"textDocument\":{" +
+            "\"uri\":\"file:///workspace/main.fl\",\"version\":2}," +
+            "\"contentChanges\":[{\"text\":" +
+            "\"module main;\\nvoid main() {}\"}]}}"
+        ).view();
+    const stringv DID_CLOSE =
+        (
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\"," +
+            "\"params\":{\"textDocument\":{" +
+            "\"uri\":\"file:///workspace/main.fl\"}}}"
+        ).view();
+    const stringv SHUTDOWN =
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"shutdown\"}";
+    const stringv EXIT =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}";
+    input := (
+        "Content-Length: 87\r\n\r\n" + INITIALIZE +
+        "Content-Length: 52\r\n\r\n" + INITIALIZED +
+        "Content-Length: 167\r\n\r\n" + DID_OPEN +
+        "Content-Length: 184\r\n\r\n" + DID_CHANGE +
+        "Content-Length: 112\r\n\r\n" + DID_CLOSE +
+        "Content-Length: 44\r\n\r\n" + SHUTDOWN +
+        "Content-Length: 33\r\n\r\n" + EXIT
+    );
+    source := input.view().cast<[]const u8>;
+    usize inputPosition = 0;
+    reader := stream::Reader::init(
+        [&const source, &inputPosition](destination) => {
+            return read_input(source, &inputPosition, destination);
+        }
+    );
+
+    [2048]u8 destination = none;
+    usize outputPosition = 0;
+    writer := stream::Writer::init(
+        [&destination, &outputPosition](bytes) => {
+            loop usize index = 0; index < bytes.len(); index++ {
+                destination[outputPosition + index] = bytes[index];
+            }
+            outputPosition = outputPosition + bytes.len();
+            return (bytes.len(), none);
+        }
+    );
+
+    const stringv ANALYZER_1 =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}";
+    const stringv ANALYZER_2 =
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"status\":\"applied\"}}";
+    const stringv ANALYZER_3 =
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{" +
+            "\"path\":\"/workspace/main.fl\",\"version\":1," +
+            "\"diagnostics\":[{\"code\":\"FLECHA-S0001\"," +
+            "\"file\":\"/workspace/main.fl\",\"startByte\":7," +
+            "\"endByte\":11,\"severity\":\"error\"," +
+            "\"message\":\"bad module\"}]}}"
+        ).view();
+    const stringv ANALYZER_4 =
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"status\":\"applied\"}}";
+    const stringv ANALYZER_5 =
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":5,\"result\":{" +
+            "\"path\":\"/workspace/main.fl\",\"version\":2," +
+            "\"diagnostics\":[]}}"
+        ).view();
+    const stringv ANALYZER_6 =
+        "{\"jsonrpc\":\"2.0\",\"id\":6,\"result\":{\"closed\":true}}";
+    const stringv ANALYZER_7 =
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":null}";
+    analyzerResponses := (
+        "Content-Length: 36\r\n\r\n" + ANALYZER_1 +
+        "Content-Length: 54\r\n\r\n" + ANALYZER_2 +
+        "Content-Length: 212\r\n\r\n" + ANALYZER_3 +
+        "Content-Length: 54\r\n\r\n" + ANALYZER_4 +
+        "Content-Length: 92\r\n\r\n" + ANALYZER_5 +
+        "Content-Length: 49\r\n\r\n" + ANALYZER_6 +
+        "Content-Length: 38\r\n\r\n" + ANALYZER_7
+    );
+    analyzerSource := analyzerResponses.view().cast<[]const u8>;
+    usize analyzerInputPosition = 0;
+    analyzerInput := stream::Reader::init(
+        [&const analyzerSource, &analyzerInputPosition](destination) => {
+            return read_input(
+                analyzerSource,
+                &analyzerInputPosition,
+                destination
+            );
+        }
+    );
+    [2048]u8 analyzerDestination = none;
+    usize analyzerOutputPosition = 0;
+    analyzerOutput := stream::Writer::init(
+        [&analyzerDestination, &analyzerOutputPosition](bytes) => {
+            loop usize index = 0; index < bytes.len(); index++ {
+                analyzerDestination[analyzerOutputPosition + index] =
+                    bytes[index];
+            }
+            analyzerOutputPosition = analyzerOutputPosition + bytes.len();
+            return (bytes.len(), none);
+        }
+    );
+
+    instance, constructionErr := server::Server::fromStreams(
+        reader,
+        writer,
+        analyzerInput,
+        analyzerOutput
+    );
+    asserts::is_true(
+        t,
+        constructionErr == none,
+        "the server is constructed over in-memory streams"
+    );
+    if constructionErr != none {
+        return;
+    }
+
+    runErr := instance.run();
+    asserts::is_true(t, runErr == none, "the complete LSP flow succeeds");
+    asserts::is_true(
+        t,
+        instance.state() == server::ServerState.Exited,
+        "exit stops the server after shutdown"
+    );
+
+    const stringv INITIALIZE_RESPONSE =
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{" +
+            "\"capabilities\":{\"textDocumentSync\":1}}}"
+        ).view();
+    const stringv SHUTDOWN_RESPONSE =
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":null}";
+    const stringv OPEN_DIAGNOSTICS =
+        (
+            "{\"jsonrpc\":\"2.0\"," +
+            "\"method\":\"textDocument/publishDiagnostics\"," +
+            "\"params\":{\"uri\":\"file:///workspace/main.fl\"," +
+            "\"version\":1,\"diagnostics\":[{\"range\":{" +
+            "\"start\":{\"line\":0,\"character\":7}," +
+            "\"end\":{\"line\":0,\"character\":11}}," +
+            "\"severity\":1,\"code\":\"FLECHA-S0001\"," +
+            "\"source\":\"flecha\",\"message\":\"bad module\"}]}}"
+        ).view();
+    const stringv CHANGE_DIAGNOSTICS =
+        (
+            "{\"jsonrpc\":\"2.0\"," +
+            "\"method\":\"textDocument/publishDiagnostics\"," +
+            "\"params\":{\"uri\":\"file:///workspace/main.fl\"," +
+            "\"version\":2,\"diagnostics\":[]}}"
+        ).view();
+    const stringv CLOSE_DIAGNOSTICS =
+        (
+            "{\"jsonrpc\":\"2.0\"," +
+            "\"method\":\"textDocument/publishDiagnostics\"," +
+            "\"params\":{\"uri\":\"file:///workspace/main.fl\"," +
+            "\"diagnostics\":[]}}"
+        ).view();
+    expected := (
+        "Content-Length: 73\r\n\r\n" + INITIALIZE_RESPONSE +
+        "Content-Length: 286\r\n\r\n" + OPEN_DIAGNOSTICS +
+        "Content-Length: 134\r\n\r\n" + CHANGE_DIAGNOSTICS +
+        "Content-Length: 122\r\n\r\n" + CLOSE_DIAGNOSTICS +
+        "Content-Length: 38\r\n\r\n" + SHUTDOWN_RESPONSE
+    );
+    asserts::bytes_equal(
+        t,
+        destination[:outputPosition],
+        expected.view().cast<[]const u8>,
+        "requests receive framed responses while notifications stay silent"
+    );
+    analyzerText := analyzerDestination[:analyzerOutputPosition].cast<stringv>;
+    asserts::is_true(
+        t,
+        strings::contains(analyzerText, "\"method\":\"initialize\"") and
+            strings::contains(analyzerText, "\"workspace\":\"/workspace\"") and
+            strings::contains(analyzerText, "\"method\":\"document/open\"") and
+            strings::contains(analyzerText, "\"method\":\"document/diagnostics\"") and
+            strings::contains(analyzerText, "\"version\":1") and
+            strings::contains(analyzerText, "\"method\":\"document/change\"") and
+            strings::contains(analyzerText, "\"version\":2") and
+            strings::contains(analyzerText, "\"method\":\"document/close\"") and
+            strings::contains(analyzerText, "\"method\":\"shutdown\""),
+        "the LSP lifecycle is translated to the private analyzer protocol"
+    );
+}
+
+test returns_method_not_found_only_for_requests(
+    &testing::UnitTest t
+) {
+    const stringv REQUEST =
+        "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"flecha/unknown\"}";
+    const stringv NOTIFICATION =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"flecha/unknown\"}";
+    input := (
+        "Content-Length: 50\r\n\r\n" + REQUEST +
+        "Content-Length: 43\r\n\r\n" + NOTIFICATION
+    );
+    source := input.view().cast<[]const u8>;
+    usize inputPosition = 0;
+    reader := stream::Reader::init(
+        [&const source, &inputPosition](destination) => {
+            return read_input(source, &inputPosition, destination);
+        }
+    );
+
+    [256]u8 destination = none;
+    usize outputPosition = 0;
+    writer := stream::Writer::init(
+        [&destination, &outputPosition](bytes) => {
+            loop usize index = 0; index < bytes.len(); index++ {
+                destination[outputPosition + index] = bytes[index];
+            }
+            outputPosition = outputPosition + bytes.len();
+            return (bytes.len(), none);
+        }
+    );
+
+    const []const u8 EMPTY_ANALYZER = "".cast<[]const u8>;
+    usize analyzerPosition = 0;
+    analyzerInput := stream::Reader::init(
+        [&const EMPTY_ANALYZER, &analyzerPosition](destination) => {
+            return read_input(
+                EMPTY_ANALYZER,
+                &analyzerPosition,
+                destination
+            );
+        }
+    );
+    analyzerOutput := stream::Writer::init((bytes) => {
+        return (bytes.len(), none);
+    });
+    instance, constructionErr := server::Server::fromStreams(
+        reader,
+        writer,
+        analyzerInput,
+        analyzerOutput
+    );
+    if constructionErr != none {
+        asserts::is_true(t, false, "the server is constructed");
+        return;
+    }
+    runErr := instance.run();
+
+    string RESPONSE =
+        "{\"jsonrpc\":\"2.0\",\"id\":9,\"error\":{\"code\":-32601," +
+        "\"message\":\"Method not found\"}}";
+    expected := "Content-Length: 77\r\n\r\n" + RESPONSE;
+    asserts::is_true(t, runErr == none, "EOF cleanly ends the server loop");
+    asserts::bytes_equal(
+        t,
+        destination[:outputPosition],
+        expected.view().cast<[]const u8>,
+        "unknown requests get -32601 and unknown notifications get no response"
+    );
+}

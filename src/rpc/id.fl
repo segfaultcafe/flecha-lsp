@@ -1,0 +1,68 @@
+module message;
+
+@imports :: lib::std::text::strings;
+
+RpcId RpcId::missing() {
+    return build RpcId {
+        self.kindValue = RpcIdKind.Missing;
+        self.numberValue = none;
+        self.textValue = none;
+    };
+}
+
+RpcId RpcId::nullId() {
+    return build RpcId {
+        self.kindValue = RpcIdKind.Null;
+        self.numberValue = none;
+        self.textValue = none;
+    };
+}
+
+RpcId RpcId::fromNumber(i64 value) {
+    return build RpcId {
+        self.kindValue = RpcIdKind.Number;
+        self.numberValue = value;
+        self.textValue = none;
+    };
+}
+
+RpcId RpcId::fromString(string value) {
+    return build RpcId {
+        self.kindValue = RpcIdKind.String;
+        self.numberValue = none;
+        self.textValue = value;
+    };
+}
+
+RpcIdKind RpcId::kind(&const self) {
+    return self->kindValue;
+}
+
+i64 RpcId::number(&const self) {
+    return self->numberValue;
+}
+
+stringv RpcId::text(&const self) <-self {
+    return self->textValue.view();
+}
+
+(RpcId, error) RpcId::clone(&const self) {
+    const RpcIdKind KIND = self->kindValue;
+    if KIND == RpcIdKind.Missing {
+        return (RpcId::missing(), none);
+    }
+    if KIND == RpcIdKind.Null {
+        return (RpcId::nullId(), none);
+    }
+    if KIND == RpcIdKind.Number {
+        return (RpcId::fromNumber(self->numberValue), none);
+    }
+
+    text, allocationErr := strings::string_from_bytes(
+        self->textValue.view().cast<[]const u8>
+    );
+    if allocationErr != none {
+        return (none, allocationErr);
+    }
+    return (RpcId::fromString(text), none);
+}

@@ -1,0 +1,41 @@
+module lsp_test;
+
+@imports
+    :: root::lsp::lsp
+    :: lib::std::tests::{asserts, testing};
+
+test converts_utf8_byte_offsets_to_lsp_utf16_positions(
+    &testing::UnitTest t
+) {
+    const stringv TEXT = "a😀b\nçx";
+    start, startErr := lsp::Position::at(TEXT, 1);
+    afterEmoji, emojiErr := lsp::Position::at(TEXT, 5);
+    secondLine, lineErr := lsp::Position::at(TEXT, 9);
+
+    asserts::is_true(
+        t,
+        startErr == none and start.line() == 0 and start.character() == 1,
+        "ASCII uses one UTF-16 code unit"
+    );
+    asserts::is_true(
+        t,
+        emojiErr == none and afterEmoji.line() == 0 and
+            afterEmoji.character() == 3,
+        "a supplementary code point uses two UTF-16 code units"
+    );
+    asserts::is_true(
+        t,
+        lineErr == none and secondLine.line() == 1 and
+            secondLine.character() == 1,
+        "line and character reset after newline"
+    );
+}
+
+test rejects_offsets_inside_utf8_sequences(&testing::UnitTest t) {
+    _, err := lsp::Position::at("😀", 2);
+    asserts::is_true(
+        t,
+        err == lsp::LspError.InvalidPosition,
+        "diagnostic offsets must land on UTF-8 boundaries"
+    );
+}

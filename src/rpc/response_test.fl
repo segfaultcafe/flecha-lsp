@@ -1,0 +1,171 @@
+module message_test;
+
+@imports
+    :: root::rpc::message
+    :: lib::json::json
+    :: lib::std::tests::{asserts, testing}
+    :: lib::std::text::strings;
+
+test serializes_success_responses_and_ids(&testing::UnitTest t) {
+    numeric, numericBuildErr := message::RpcResponse::success(
+        message::RpcId::fromNumber(42),
+        "{\"capabilities\":{}}".cast<[]const u8>
+    );
+    numericJson, numericErr := numeric.serialize();
+
+    textualId, textAllocationErr := strings::string_from_bytes(
+        "editor-\"one".cast<[]const u8>
+    );
+    textual, textualBuildErr := message::RpcResponse::success(
+        message::RpcId::fromString(textualId),
+        "[1,true]".cast<[]const u8>
+    );
+    textualJson, textualErr := textual.serialize();
+
+    explicitNull, nullBuildErr := message::RpcResponse::success(
+        message::RpcId::nullId(),
+        "null".cast<[]const u8>
+    );
+    nullJson, nullErr := explicitNull.serialize();
+
+    asserts::is_true(
+        t,
+        numericBuildErr == none and numericErr == none,
+        "a numeric-ID success response serializes"
+    );
+    if numericErr == none {
+        asserts::string_equal(
+            t,
+            numericJson[:].cast<stringv>,
+            "{\"jsonrpc\":\"2.0\",\"id\":42,\"result\":{\"capabilities\":{}}}",
+            "the result is embedded as JSON rather than quoted text"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        textAllocationErr == none and textualBuildErr == none and
+            textualErr == none,
+        "a string-ID success response serializes"
+    );
+    if textualErr == none {
+        asserts::string_equal(
+            t,
+            textualJson[:].cast<stringv>,
+            "{\"jsonrpc\":\"2.0\",\"id\":\"editor-\\\"one\",\"result\":[1,true]}",
+            "string IDs are escaped"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        nullBuildErr == none and nullErr == none,
+        "an explicit null-ID response serializes"
+    );
+    if nullErr == none {
+        asserts::string_equal(
+            t,
+            nullJson[:].cast<stringv>,
+            "{\"jsonrpc\":\"2.0\",\"id\":null,\"result\":null}",
+            "an explicit null ID remains null"
+        );
+    }
+}
+
+test serializes_error_responses_with_optional_data(&testing::UnitTest t) {
+    withoutData, buildErr := message::RpcResponse::failure(
+        message::RpcId::nullId(),
+        -32700,
+        "Parse error"
+    );
+    withoutDataJson, serializeErr := withoutData.serialize();
+
+    withData, dataBuildErr := message::RpcResponse::failure(
+        message::RpcId::fromNumber(7),
+        -32602,
+        "Invalid \"params\"",
+        "{\"field\":\"position\"}".cast<[]const u8>
+    );
+    withDataJson, dataSerializeErr := withData.serialize();
+
+    asserts::is_true(
+        t,
+        buildErr == none and serializeErr == none,
+        "an error response without data serializes"
+    );
+    if serializeErr == none {
+        asserts::string_equal(
+            t,
+            withoutDataJson[:].cast<stringv>,
+            (
+                "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{" +
+                "\"code\":-32700,\"message\":\"Parse error\"}}"
+            ).view(),
+            "error data is omitted when absent"
+        );
+    }
+
+    asserts::is_true(
+        t,
+        dataBuildErr == none and dataSerializeErr == none,
+        "an error response with data serializes"
+    );
+    if dataSerializeErr == none {
+        asserts::string_equal(
+            t,
+            withDataJson[:].cast<stringv>,
+            (
+                "{\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{" +
+                "\"code\":-32602,\"message\":\"Invalid \\\"params\\\"\"," +
+                "\"data\":{\"field\":\"position\"}}}"
+            ).view(),
+            "error messages are escaped and data remains raw JSON"
+        );
+    }
+}
+
+test rejects_notifications_and_invalid_raw_payloads(&testing::UnitTest t) {
+    notification, notificationBuildErr := message::RpcResponse::success(
+        message::RpcId::missing(),
+        "null".cast<[]const u8>
+    );
+    _, notificationErr := notification.serialize();
+
+    invalidResult, resultBuildErr := message::RpcResponse::success(
+        message::RpcId::fromNumber(1),
+        "{}[]".cast<[]const u8>
+    );
+    _, resultErr := invalidResult.serialize();
+
+    invalidData, dataBuildErr := message::RpcResponse::failure(
+        message::RpcId::fromNumber(2),
+        -32603,
+        "Internal error",
+        "{]".cast<[]const u8>
+    );
+    _, dataErr := invalidData.serialize();
+
+    asserts::is_true(
+        t,
+        notificationBuildErr == none and
+            notificationErr == message::MessageError.InvalidId,
+        "a notification cannot produce a response"
+    );
+    asserts::is_true(
+        t,
+        resultBuildErr == none and dataBuildErr == none,
+        "response construction owns the supplied bytes"
+    );
+    asserts::has_error_variant(
+        t,
+        resultErr,
+        json::JsonError.TrailingData,
+        "a result must contain exactly one JSON value"
+    );
+    asserts::has_error_variant(
+        t,
+        dataErr,
+        json::JsonError.InvalidSyntax,
+        "error data must be valid JSON"
+    );
+}

@@ -1,0 +1,149 @@
+module server;
+
+@imports
+    :: root::lsp::lsp
+    :: root::project::context
+    :: root::rpc::message;
+
+private error Server::dispatch(
+    &self,
+    message::RpcRequest request
+) {
+    const stringv METHOD = request.method();
+
+    if METHOD == "exit" {
+        self->stateValue = ServerState.Exited;
+        return none;
+    }
+
+    if request.isNotification() {
+        if METHOD == "initialized" and
+            self->stateValue == ServerState.Initializing {
+            self->stateValue = ServerState.Ready;
+            return none;
+        }
+        if METHOD == "textDocument/didOpen" {
+            update, parseErr := lsp::DocumentUpdate::parseOpen(
+                request.params()
+            );
+            if parseErr != none {
+                return none;
+            }
+            analyzerErr := self->analyzerClient.openDocument(
+                update.path(),
+                update.version(),
+                update.text()
+            );
+            if analyzerErr != none {
+                return analyzerErr;
+            }
+            snapshot, diagnosticsErr := self->analyzerClient.diagnostics(
+                update.path()
+            );
+            if diagnosticsErr != none {
+                return diagnosticsErr;
+            }
+            return self->publishDiagnostics(&update, &snapshot);
+        }
+        if METHOD == "textDocument/didChange" {
+            update, parseErr := lsp::DocumentUpdate::parseChange(
+                request.params()
+            );
+            if parseErr != none {
+                return none;
+            }
+            analyzerErr := self->analyzerClient.changeDocument(
+                update.path(),
+                update.version(),
+                update.text()
+            );
+            if analyzerErr != none {
+                return analyzerErr;
+            }
+            snapshot, diagnosticsErr := self->analyzerClient.diagnostics(
+                update.path()
+            );
+            if diagnosticsErr != none {
+                return diagnosticsErr;
+            }
+            return self->publishDiagnostics(&update, &snapshot);
+        }
+        if METHOD == "textDocument/didClose" {
+            document, parseErr := lsp::DocumentClose::parse(request.params());
+            if parseErr != none {
+                return none;
+            }
+            analyzerErr := self->analyzerClient.closeDocument(document.path());
+            if analyzerErr != none {
+                return analyzerErr;
+            }
+            return self->clearDiagnostics(document.uri());
+        }
+        return none;
+    }
+
+    id, idErr := request.id()->clone();
+    if idErr != none {
+        return idErr;
+    }
+
+    message::RpcResponse response = none;
+    error responseErr = none;
+
+    if METHOD == "initialize" {
+        params, paramsErr := lsp::InitializeParams::parse(request.params());
+        if paramsErr != none {
+            response, responseErr = message::RpcResponse::failure(
+                id,
+                -32602,
+                "Invalid initialize params"
+            );
+        } else {
+            packageGraph, hasPackageGraph, graphErr :=
+                context::package_graph(params.workspace());
+            if graphErr != none {
+                responseErr = graphErr;
+            } else {
+                responseErr = self->analyzerClient.initialize(
+                    params.workspace(),
+                    packageGraph.view(),
+                    hasPackageGraph
+                );
+            }
+            if responseErr == none {
+                response, responseErr = message::RpcResponse::success(
+                    id,
+                    (
+                        "{\"capabilities\":{" +
+                        "\"textDocumentSync\":1}}"
+                    ).view().cast<[]const u8>
+                );
+            }
+        }
+        if responseErr == none {
+            self->stateValue = ServerState.Initializing;
+        }
+    } else if METHOD == "shutdown" {
+        responseErr = self->analyzerClient.shutdown();
+        if responseErr == none {
+            response, responseErr = message::RpcResponse::success(
+                id,
+                "null".cast<[]const u8>
+            );
+        }
+        if responseErr == none {
+            self->stateValue = ServerState.Shutdown;
+        }
+    } else {
+        response, responseErr = message::RpcResponse::failure(
+            id,
+            -32601,
+            "Method not found"
+        );
+    }
+
+    if responseErr != none {
+        return responseErr;
+    }
+    return self->writeResponse(&response);
+}

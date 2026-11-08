@@ -9,8 +9,8 @@
         "kind": "registry",
         "location": "https://registry.flecha-lang.org/v1"
       },
-      "version": "0.1.1",
-      "checksum": "sha256:f05eac9283c1a384a97064d6f9cc3d2733250d3eccda3693eefbe8d27ad41d79",
+      "version": "0.1.2",
+      "checksum": "sha256:c840827ea6cae9157668b550a6a0151df57e08fd6301fd4d444570087e5e9878",
       "flecha": ">=0.3.0, <0.4.0",
       "dependencies": {
         "std": "toolchain-std"

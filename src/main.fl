@@ -1,37 +1,89 @@
 module main;
 
 @imports
-    :: root::transport::framing
+    :: root::server::server
     :: lib::std::fmt
-    :: lib::std::io::stdio;
+    :: lib::std::io::stdio
+    :: lib::std::os::environment
+    :: lib::std::process::command
+    :: lib::std::text::strings;
 
-void main() {
-    standardInput := stdio::standard_input();
-    source := standardInput.reader();
-
-    reader, constructionError :=
-        framing::FramedReader::fromReader(source);
-
-    if constructionError != none {
-        fmt::eprintln("failed to create framed reader");
-        return;
+i32 main() {
+    compiler, compilerPresent, environmentErr :=
+        environment::get("FLECHA_COMPILER");
+    if environmentErr != none {
+        fmt::eprintln("flecha-lsp: cannot read FLECHA_COMPILER");
+        return 1;
+    }
+    if !compilerPresent or compiler.len() == 0 {
+        compiler, environmentErr = strings::string_from_bytes(
+            "flecha".cast<[]const u8>
+        );
+        if environmentErr != none {
+            return 1;
+        }
     }
 
-    body, hasMessage, readError := reader.readMessage();
-    if readError != none {
-        fmt::eprintln("failed to read framed message");
-        return;
-    }
-
-    if !hasMessage {
-        fmt::eprintln("clean EOF");
-        return;
-    }
-
-    fmt::eprintln(
-        "received ",
-        body.len(),
-        " bytes: ",
-        body[:].cast<stringv>
+    analyze, allocationErr := strings::string_from_bytes(
+        "analyze".cast<[]const u8>
     );
+    if allocationErr != none {
+        return 1;
+    }
+    stdioArgument, allocationErr := strings::string_from_bytes(
+        "--stdio".cast<[]const u8>
+    );
+    if allocationErr != none {
+        return 1;
+    }
+
+    analyzerCommand := command::Command::init(compiler);
+    if analyzerCommand.arg(analyze) != none or
+        analyzerCommand.arg(stdioArgument) != none {
+        return 1;
+    }
+    analyzerCommand.setStdin(command::Stdio.Piped);
+    analyzerCommand.setStdout(command::Stdio.Piped);
+
+    child, spawnErr := analyzerCommand.spawn();
+    if spawnErr != none {
+        fmt::eprintln("flecha-lsp: cannot start flecha analyze --stdio");
+        return 1;
+    }
+    compilerInput := child.takeStdin();
+    compilerOutput := child.takeStdout();
+
+    standardInput := stdio::standard_input();
+    standardOutput := stdio::standard_output();
+    error serverError = none;
+
+    {
+        instance, constructionError := server::Server::fromStreams(
+            standardInput.reader(),
+            standardOutput.writer(),
+            compilerOutput.reader(),
+            compilerInput.writer()
+        );
+
+        if constructionError != none {
+            serverError = constructionError;
+        } else {
+            serverError = instance.run();
+        }
+    }
+
+    error inputCloseError = compilerInput.close();
+    error outputCloseError = compilerOutput.close();
+    status, waitErr := child.wait();
+
+    if serverError != none {
+        fmt::eprintln("flecha-lsp: server failed");
+        return 1;
+    }
+    if inputCloseError != none or outputCloseError != none or
+        waitErr != none or !status.success() {
+        fmt::eprintln("flecha-lsp: analyzer failed");
+        return 1;
+    }
+    return 0;
 }

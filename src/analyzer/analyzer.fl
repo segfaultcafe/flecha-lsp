@@ -1,0 +1,72 @@
+module analyzer;
+
+@imports
+    :: root::transport::framing
+    :: lib::std::containers::collections as coll;
+
+export error AnalyzerError {
+    UnexpectedEof,
+    InvalidResponse,
+    RemoteError,
+}
+
+export structure Client {
+    private {
+        framing::FramedReader input;
+        framing::FramedWriter output;
+        i64 nextIdValue;
+    }
+};
+
+export enum DiagnosticSeverity {
+    default Error,
+    Warning,
+    Note,
+}
+
+export structure Diagnostic {
+    private {
+        string codeValue;
+        string fileValue;
+        usize startByteValue;
+        usize endByteValue;
+        DiagnosticSeverity severityValue;
+        string messageValue;
+    }
+};
+
+export structure DiagnosticsSnapshot {
+    private {
+        string pathValue;
+        i64 versionValue;
+        coll::Array<Diagnostic> diagnosticsValue;
+    }
+};
+
+stringv Diagnostic::code(&const self) <-self {
+    return self->codeValue.view();
+}
+
+usize Diagnostic::startByte(&const self) {
+    return self->startByteValue;
+}
+
+usize Diagnostic::endByte(&const self) {
+    return self->endByteValue;
+}
+
+DiagnosticSeverity Diagnostic::severity(&const self) {
+    return self->severityValue;
+}
+
+stringv Diagnostic::message(&const self) <-self {
+    return self->messageValue.view();
+}
+
+i64 DiagnosticsSnapshot::version(&const self) {
+    return self->versionValue;
+}
+
+[]const Diagnostic DiagnosticsSnapshot::diagnostics(&const self) <-self {
+    return self->diagnosticsValue.view();
+}

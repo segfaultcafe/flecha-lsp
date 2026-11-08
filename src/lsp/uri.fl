@@ -1,0 +1,59 @@
+module lsp;
+
+@imports :: lib::std::text::strings;
+
+(string, error) file_uri_to_path(stringv uri) {
+    if !strings::starts_with(uri, "file://") {
+        return (none, LspError.UnsupportedUri);
+    }
+
+    source := uri.cast<[]const u8>;
+    const usize START = 7;
+    if source.len() <= START or source[START] != 47 {
+        return (none, LspError.UnsupportedUri);
+    }
+
+    decoded, allocationErr := new<own []u8>(source.len() - START);
+    if allocationErr != none {
+        return (none, allocationErr);
+    }
+
+    usize input = START;
+    usize output = 0;
+    while input < source.len() {
+        if source[input] != 37 {
+            decoded[output] = source[input];
+            input++;
+            output++;
+            proceed;
+        }
+
+        if input + 2 >= source.len() {
+            return (none, LspError.UnsupportedUri);
+        }
+        high, highValid := hex_value(source[input + 1]);
+        low, lowValid := hex_value(source[input + 2]);
+        if !highValid or !lowValid {
+            return (none, LspError.UnsupportedUri);
+        }
+
+        decoded[output] = high * 16 + low;
+        input += 3;
+        output++;
+    }
+
+    return strings::string_from_bytes(decoded[:output]);
+}
+
+(u8, bool) hex_value(u8 byte) {
+    if byte >= 48 and byte <= 57 {
+        return (byte - 48, true);
+    }
+    if byte >= 65 and byte <= 70 {
+        return (byte - 55, true);
+    }
+    if byte >= 97 and byte <= 102 {
+        return (byte - 87, true);
+    }
+    return (none, false);
+}
