@@ -77,7 +77,7 @@ test runs_initialize_shutdown_and_exit_end_to_end(
         }
     );
 
-    [512]u8 destination = none;
+    [2048]u8 destination = none;
     usize outputPosition = 0;
     writer := stream::Writer::init(
         [&destination, &outputPosition](bytes) => {
@@ -94,17 +94,34 @@ test runs_initialize_shutdown_and_exit_end_to_end(
     const stringv ANALYZER_2 =
         "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"status\":\"applied\"}}";
     const stringv ANALYZER_3 =
-        "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"status\":\"applied\"}}";
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{" +
+            "\"path\":\"/workspace/main.fl\",\"version\":1," +
+            "\"diagnostics\":[{\"code\":\"FLECHA-S0001\"," +
+            "\"file\":\"/workspace/main.fl\",\"startByte\":7," +
+            "\"endByte\":11,\"severity\":\"error\"," +
+            "\"message\":\"bad module\"}]}}"
+        ).view();
     const stringv ANALYZER_4 =
-        "{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"closed\":true}}";
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"status\":\"applied\"}}";
     const stringv ANALYZER_5 =
-        "{\"jsonrpc\":\"2.0\",\"id\":5,\"result\":null}";
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":5,\"result\":{" +
+            "\"path\":\"/workspace/main.fl\",\"version\":2," +
+            "\"diagnostics\":[]}}"
+        ).view();
+    const stringv ANALYZER_6 =
+        "{\"jsonrpc\":\"2.0\",\"id\":6,\"result\":{\"closed\":true}}";
+    const stringv ANALYZER_7 =
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":null}";
     analyzerResponses := (
         "Content-Length: 36\r\n\r\n" + ANALYZER_1 +
         "Content-Length: 54\r\n\r\n" + ANALYZER_2 +
-        "Content-Length: 54\r\n\r\n" + ANALYZER_3 +
-        "Content-Length: 49\r\n\r\n" + ANALYZER_4 +
-        "Content-Length: 38\r\n\r\n" + ANALYZER_5
+        "Content-Length: 212\r\n\r\n" + ANALYZER_3 +
+        "Content-Length: 54\r\n\r\n" + ANALYZER_4 +
+        "Content-Length: 92\r\n\r\n" + ANALYZER_5 +
+        "Content-Length: 49\r\n\r\n" + ANALYZER_6 +
+        "Content-Length: 38\r\n\r\n" + ANALYZER_7
     );
     analyzerSource := analyzerResponses.view().cast<[]const u8>;
     usize analyzerInputPosition = 0;
@@ -160,8 +177,36 @@ test runs_initialize_shutdown_and_exit_end_to_end(
         ).view();
     const stringv SHUTDOWN_RESPONSE =
         "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":null}";
+    const stringv OPEN_DIAGNOSTICS =
+        (
+            "{\"jsonrpc\":\"2.0\"," +
+            "\"method\":\"textDocument/publishDiagnostics\"," +
+            "\"params\":{\"uri\":\"file:///workspace/main.fl\"," +
+            "\"version\":1,\"diagnostics\":[{\"range\":{" +
+            "\"start\":{\"line\":0,\"character\":7}," +
+            "\"end\":{\"line\":0,\"character\":11}}," +
+            "\"severity\":1,\"code\":\"FLECHA-S0001\"," +
+            "\"source\":\"flecha\",\"message\":\"bad module\"}]}}"
+        ).view();
+    const stringv CHANGE_DIAGNOSTICS =
+        (
+            "{\"jsonrpc\":\"2.0\"," +
+            "\"method\":\"textDocument/publishDiagnostics\"," +
+            "\"params\":{\"uri\":\"file:///workspace/main.fl\"," +
+            "\"version\":2,\"diagnostics\":[]}}"
+        ).view();
+    const stringv CLOSE_DIAGNOSTICS =
+        (
+            "{\"jsonrpc\":\"2.0\"," +
+            "\"method\":\"textDocument/publishDiagnostics\"," +
+            "\"params\":{\"uri\":\"file:///workspace/main.fl\"," +
+            "\"diagnostics\":[]}}"
+        ).view();
     expected := (
         "Content-Length: 73\r\n\r\n" + INITIALIZE_RESPONSE +
+        "Content-Length: 286\r\n\r\n" + OPEN_DIAGNOSTICS +
+        "Content-Length: 134\r\n\r\n" + CHANGE_DIAGNOSTICS +
+        "Content-Length: 122\r\n\r\n" + CLOSE_DIAGNOSTICS +
         "Content-Length: 38\r\n\r\n" + SHUTDOWN_RESPONSE
     );
     asserts::bytes_equal(
@@ -176,6 +221,7 @@ test runs_initialize_shutdown_and_exit_end_to_end(
         strings::contains(analyzerText, "\"method\":\"initialize\"") and
             strings::contains(analyzerText, "\"workspace\":\"/workspace\"") and
             strings::contains(analyzerText, "\"method\":\"document/open\"") and
+            strings::contains(analyzerText, "\"method\":\"document/diagnostics\"") and
             strings::contains(analyzerText, "\"version\":1") and
             strings::contains(analyzerText, "\"method\":\"document/change\"") and
             strings::contains(analyzerText, "\"version\":2") and

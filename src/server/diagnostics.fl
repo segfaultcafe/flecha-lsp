@@ -1,0 +1,139 @@
+module server;
+
+@imports
+    :: root::analyzer::analyzer
+    :: root::lsp::lsp
+    :: lib::json::json;
+
+private error Server::publishDiagnostics(
+    &self,
+    &const lsp::DocumentUpdate document,
+    &const analyzer::DiagnosticsSnapshot snapshot
+) {
+    writer := json::Writer::init();
+    err := Server::beginNotification(
+        &writer,
+        "textDocument/publishDiagnostics"
+    );
+    if err == none { err = writer.key("params"); }
+    if err == none { err = writer.beginObject(); }
+    if err == none { err = writer.key("uri"); }
+    if err == none { err = writer.write(document->uri()); }
+    if err == none { err = writer.key("version"); }
+    if err == none { err = writer.write(document->version()); }
+    if err == none { err = writer.key("diagnostics"); }
+    if err == none { err = writer.beginArray(); }
+
+    diagnostics := snapshot->diagnostics();
+    loop usize index = 0; err == none and index < diagnostics.len(); index++ {
+        diagnostic := &diagnostics[index];
+        start, startErr := lsp::Position::at(
+            document->text(),
+            diagnostic->startByte()
+        );
+        if startErr != none {
+            return startErr;
+        }
+        end, endErr := lsp::Position::at(
+            document->text(),
+            diagnostic->endByte()
+        );
+        if endErr != none {
+            return endErr;
+        }
+
+        err = writer.beginObject();
+        if err == none { err = writer.key("range"); }
+        if err == none { err = writer.beginObject(); }
+        if err == none { err = writer.key("start"); }
+        if err == none { err = writer.beginObject(); }
+        if err == none { err = writer.key("line"); }
+        if err == none { err = writer.write(start.line()); }
+        if err == none { err = writer.key("character"); }
+        if err == none { err = writer.write(start.character()); }
+        if err == none { err = writer.endObject(); }
+        if err == none { err = writer.key("end"); }
+        if err == none { err = writer.beginObject(); }
+        if err == none { err = writer.key("line"); }
+        if err == none { err = writer.write(end.line()); }
+        if err == none { err = writer.key("character"); }
+        if err == none { err = writer.write(end.character()); }
+        if err == none { err = writer.endObject(); }
+        if err == none { err = writer.endObject(); }
+        if err == none { err = writer.key("severity"); }
+        if err == none {
+            err = writer.write(Server::severity(diagnostic->severity()));
+        }
+        if err == none { err = writer.key("code"); }
+        if err == none { err = writer.write(diagnostic->code()); }
+        if err == none { err = writer.key("source"); }
+        if err == none { err = writer.write("flecha"); }
+        if err == none { err = writer.key("message"); }
+        if err == none { err = writer.write(diagnostic->message()); }
+        if err == none { err = writer.endObject(); }
+    }
+
+    if err == none { err = writer.endArray(); }
+    if err == none { err = writer.endObject(); }
+    return self->finishNotification(&writer, err);
+}
+
+private error Server::clearDiagnostics(&self, stringv uri) {
+    writer := json::Writer::init();
+    err := Server::beginNotification(
+        &writer,
+        "textDocument/publishDiagnostics"
+    );
+    if err == none { err = writer.key("params"); }
+    if err == none { err = writer.beginObject(); }
+    if err == none { err = writer.key("uri"); }
+    if err == none { err = writer.write(uri); }
+    if err == none { err = writer.key("diagnostics"); }
+    if err == none { err = writer.beginArray(); }
+    if err == none { err = writer.endArray(); }
+    if err == none { err = writer.endObject(); }
+    return self->finishNotification(&writer, err);
+}
+
+private error Server::beginNotification(
+    &json::Writer writer,
+    stringv method
+) {
+    err := writer->beginObject();
+    if err == none { err = writer->key("jsonrpc"); }
+    if err == none { err = writer->write("2.0"); }
+    if err == none { err = writer->key("method"); }
+    if err == none { err = writer->write(method); }
+    return err;
+}
+
+private error Server::finishNotification(
+    &self,
+    &json::Writer writer,
+    error previous
+) {
+    error err = previous;
+    if err == none { err = writer->endObject(); }
+    if err != none {
+        return err;
+    }
+    body, serializationErr := writer->finish();
+    if serializationErr != none {
+        return serializationErr;
+    }
+    writeErr := self->output.writeMessage(body[:]);
+    if writeErr != none {
+        return writeErr;
+    }
+    return self->output.flush();
+}
+
+private i32 Server::severity(analyzer::DiagnosticSeverity severity) {
+    if severity == analyzer::DiagnosticSeverity.Warning {
+        return 2;
+    }
+    if severity == analyzer::DiagnosticSeverity.Note {
+        return 3;
+    }
+    return 1;
+}

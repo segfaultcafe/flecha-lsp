@@ -1,0 +1,38 @@
+module lsp;
+
+@imports :: lib::std::text::utf8;
+
+(Position, error) Position::at(stringv text, usize byteOffset) {
+    bytes := text.cast<[]const u8>;
+    if byteOffset > bytes.len() {
+        return (none, LspError.InvalidPosition);
+    }
+
+    usize index = 0;
+    u32 line = 0;
+    u32 character = 0;
+    while index < byteOffset {
+        if bytes[index] == 10 {
+            index++;
+            line++;
+            character = 0;
+            proceed;
+        }
+
+        codePoint, next, decodeErr := utf8::decode(text, index);
+        if decodeErr != none or next > byteOffset {
+            return (none, LspError.InvalidPosition);
+        }
+        if codePoint > 65535 {
+            character += 2;
+        } else {
+            character++;
+        }
+        index = next;
+    }
+
+    return (build Position {
+        self.lineValue = line;
+        self.characterValue = character;
+    }, none);
+}

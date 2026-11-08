@@ -211,6 +211,7 @@ module lsp;
         return (none, uriErr);
     }
     return (build DocumentClose {
+        self.uriValue = uri;
         self.pathValue = path;
     }, none);
 }
@@ -225,6 +226,7 @@ private (DocumentUpdate, error) DocumentUpdate::create(
         return (none, uriErr);
     }
     return (build DocumentUpdate {
+        self.uriValue = uri;
         self.pathValue = path;
         self.versionValue = version;
         self.textValue = text;

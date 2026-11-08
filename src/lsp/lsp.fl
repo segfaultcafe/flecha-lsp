@@ -4,6 +4,7 @@ export error LspError {
     InvalidParams,
     UnsupportedUri,
     IncrementalChange,
+    InvalidPosition,
 }
 
 export structure InitializeParams {
@@ -12,6 +13,7 @@ export structure InitializeParams {
 
 export structure DocumentUpdate {
     private {
+        string uriValue;
         string pathValue;
         i64 versionValue;
         string textValue;
@@ -19,11 +21,25 @@ export structure DocumentUpdate {
 };
 
 export structure DocumentClose {
-    private string pathValue;
+    private {
+        string uriValue;
+        string pathValue;
+    }
+};
+
+export structure Position {
+    private {
+        u32 lineValue;
+        u32 characterValue;
+    }
 };
 
 stringv InitializeParams::workspace(&const self) <-self {
     return self->workspaceValue.view();
+}
+
+stringv DocumentUpdate::uri(&const self) <-self {
+    return self->uriValue.view();
 }
 
 stringv DocumentUpdate::path(&const self) <-self {
@@ -38,6 +54,18 @@ stringv DocumentUpdate::text(&const self) <-self {
     return self->textValue.view();
 }
 
+stringv DocumentClose::uri(&const self) <-self {
+    return self->uriValue.view();
+}
+
 stringv DocumentClose::path(&const self) <-self {
     return self->pathValue.view();
+}
+
+u32 Position::line(&const self) {
+    return self->lineValue;
+}
+
+u32 Position::character(&const self) {
+    return self->characterValue;
 }

@@ -28,11 +28,21 @@ private error Server::dispatch(
             if parseErr != none {
                 return none;
             }
-            return self->analyzerClient.openDocument(
+            analyzerErr := self->analyzerClient.openDocument(
                 update.path(),
                 update.version(),
                 update.text()
             );
+            if analyzerErr != none {
+                return analyzerErr;
+            }
+            snapshot, diagnosticsErr := self->analyzerClient.diagnostics(
+                update.path()
+            );
+            if diagnosticsErr != none {
+                return diagnosticsErr;
+            }
+            return self->publishDiagnostics(&update, &snapshot);
         }
         if METHOD == "textDocument/didChange" {
             update, parseErr := lsp::DocumentUpdate::parseChange(
@@ -41,18 +51,32 @@ private error Server::dispatch(
             if parseErr != none {
                 return none;
             }
-            return self->analyzerClient.changeDocument(
+            analyzerErr := self->analyzerClient.changeDocument(
                 update.path(),
                 update.version(),
                 update.text()
             );
+            if analyzerErr != none {
+                return analyzerErr;
+            }
+            snapshot, diagnosticsErr := self->analyzerClient.diagnostics(
+                update.path()
+            );
+            if diagnosticsErr != none {
+                return diagnosticsErr;
+            }
+            return self->publishDiagnostics(&update, &snapshot);
         }
         if METHOD == "textDocument/didClose" {
             document, parseErr := lsp::DocumentClose::parse(request.params());
             if parseErr != none {
                 return none;
             }
-            return self->analyzerClient.closeDocument(document.path());
+            analyzerErr := self->analyzerClient.closeDocument(document.path());
+            if analyzerErr != none {
+                return analyzerErr;
+            }
+            return self->clearDiagnostics(document.uri());
         }
         return none;
     }
