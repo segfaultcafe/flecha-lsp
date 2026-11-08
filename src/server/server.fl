@@ -1,6 +1,8 @@
 module server;
 
-@imports :: root::transport::framing;
+@imports
+    :: root::analyzer::analyzer
+    :: root::transport::framing;
 
 export enum ServerState {
     default Uninitialized,
@@ -14,6 +16,7 @@ export structure Server {
     private {
         framing::FramedReader input;
         framing::FramedWriter output;
+        analyzer::Client analyzerClient;
         ServerState stateValue;
     }
 };

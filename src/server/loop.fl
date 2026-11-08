@@ -1,14 +1,17 @@
 module server;
 
 @imports
+    :: root::analyzer::analyzer
     :: root::rpc::message
     :: root::transport::framing
     :: lib::std::io::stream;
 
 (Server, error) Server::fromStreams(
     stream::Reader input,
-    stream::Writer output
-) <-(input, output) {
+    stream::Writer output,
+    stream::Reader analyzerInput,
+    stream::Writer analyzerOutput
+) <-(input, output, analyzerInput, analyzerOutput) {
     reader, readerErr := framing::FramedReader::fromReader(input);
     if readerErr != none {
         return (none, readerErr);
@@ -19,9 +22,18 @@ module server;
         return (none, writerErr);
     }
 
+    analyzerClient, analyzerErr := analyzer::Client::fromStreams(
+        analyzerInput,
+        analyzerOutput
+    );
+    if analyzerErr != none {
+        return (none, analyzerErr);
+    }
+
     return (build Server {
         self.input = reader;
         self.output = writer;
+        self.analyzerClient = analyzerClient;
         self.stateValue = ServerState.Uninitialized;
     }, none);
 }

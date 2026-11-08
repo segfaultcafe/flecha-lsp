@@ -1,6 +1,8 @@
 module server;
 
-@imports :: root::rpc::message;
+@imports
+    :: root::lsp::lsp
+    :: root::rpc::message;
 
 private error Server::dispatch(
     &self,
@@ -17,6 +19,40 @@ private error Server::dispatch(
         if METHOD == "initialized" and
             self->stateValue == ServerState.Initializing {
             self->stateValue = ServerState.Ready;
+            return none;
+        }
+        if METHOD == "textDocument/didOpen" {
+            update, parseErr := lsp::DocumentUpdate::parseOpen(
+                request.params()
+            );
+            if parseErr != none {
+                return none;
+            }
+            return self->analyzerClient.openDocument(
+                update.path(),
+                update.version(),
+                update.text()
+            );
+        }
+        if METHOD == "textDocument/didChange" {
+            update, parseErr := lsp::DocumentUpdate::parseChange(
+                request.params()
+            );
+            if parseErr != none {
+                return none;
+            }
+            return self->analyzerClient.changeDocument(
+                update.path(),
+                update.version(),
+                update.text()
+            );
+        }
+        if METHOD == "textDocument/didClose" {
+            document, parseErr := lsp::DocumentClose::parse(request.params());
+            if parseErr != none {
+                return none;
+            }
+            return self->analyzerClient.closeDocument(document.path());
         }
         return none;
     }
@@ -30,18 +66,36 @@ private error Server::dispatch(
     error responseErr = none;
 
     if METHOD == "initialize" {
-        response, responseErr = message::RpcResponse::success(
-            id,
-            "{\"capabilities\":{}}".cast<[]const u8>
-        );
+        params, paramsErr := lsp::InitializeParams::parse(request.params());
+        if paramsErr != none {
+            response, responseErr = message::RpcResponse::failure(
+                id,
+                -32602,
+                "Invalid initialize params"
+            );
+        } else {
+            responseErr = self->analyzerClient.initialize(params.workspace());
+            if responseErr == none {
+                response, responseErr = message::RpcResponse::success(
+                    id,
+                    (
+                        "{\"capabilities\":{" +
+                        "\"textDocumentSync\":1}}"
+                    ).view().cast<[]const u8>
+                );
+            }
+        }
         if responseErr == none {
             self->stateValue = ServerState.Initializing;
         }
     } else if METHOD == "shutdown" {
-        response, responseErr = message::RpcResponse::success(
-            id,
-            "null".cast<[]const u8>
-        );
+        responseErr = self->analyzerClient.shutdown();
+        if responseErr == none {
+            response, responseErr = message::RpcResponse::success(
+                id,
+                "null".cast<[]const u8>
+            );
+        }
         if responseErr == none {
             self->stateValue = ServerState.Shutdown;
         }
