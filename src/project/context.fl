@@ -1,0 +1,23 @@
+module context;
+
+@imports
+    :: lib::std::io::filesystem
+    :: lib::std::io::path;
+
+// Finds Longbow's resolved package graph without triggering a build. An absent
+// graph keeps the analyzer's legacy workspace behavior.
+export (string, bool, error) package_graph(stringv workspace) {
+    target, joinErr := path::join(workspace, "target");
+    if joinErr != none {
+        return (none, false, joinErr);
+    }
+    graph, joinErr := path::join(target.view(), "package-graph.json");
+    if joinErr != none {
+        return (none, false, joinErr);
+    }
+    present, existsErr := filesystem::exists(graph.view());
+    if existsErr != none {
+        return (none, false, existsErr);
+    }
+    return (graph, present, none);
+}

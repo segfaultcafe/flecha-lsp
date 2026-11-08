@@ -26,7 +26,12 @@ module analyzer;
     }, none);
 }
 
-error Client::initialize(&self, stringv workspace) {
+error Client::initialize(
+    &self,
+    stringv workspace,
+    stringv packageGraph,
+    bool hasPackageGraph
+) {
     const i64 ID = self->takeId();
     writer := json::Writer::init();
     err := Client::beginRequest(&writer, ID, "initialize");
@@ -38,6 +43,12 @@ error Client::initialize(&self, stringv workspace) {
     if err == none { err = writer.write(0); }
     if err == none { err = writer.key("workspace"); }
     if err == none { err = writer.write(workspace); }
+    if err == none and hasPackageGraph {
+        err = writer.key("packageGraph");
+    }
+    if err == none and hasPackageGraph {
+        err = writer.write(packageGraph);
+    }
     if err == none { err = writer.endObject(); }
     return self->finishRequest(&writer, ID, err);
 }

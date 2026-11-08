@@ -69,7 +69,11 @@ test translates_document_operations_to_private_requests(
         return;
     }
 
-    initializeErr := client.initialize("/workspace");
+    initializeErr := client.initialize(
+        "/workspace",
+        "/workspace/target/package-graph.json",
+        true
+    );
     openErr := client.openDocument("/workspace/main.fl", 1, "module main;");
     changeErr := client.changeDocument(
         "/workspace/main.fl",
@@ -95,6 +99,10 @@ test translates_document_operations_to_private_requests(
         t,
         strings::contains(requestText, "\"method\":\"initialize\"") and
             strings::contains(requestText, "\"workspace\":\"/workspace\"") and
+            strings::contains(
+                requestText,
+                "\"packageGraph\":\"/workspace/target/package-graph.json\""
+            ) and
             strings::contains(requestText, "\"method\":\"document/open\"") and
             strings::contains(requestText, "\"version\":1") and
             strings::contains(requestText, "\"method\":\"document/change\"") and
@@ -125,7 +133,7 @@ test rejects_remote_errors(&testing::UnitTest t) {
         asserts::is_true(t, false, "the analyzer client is constructed");
         return;
     }
-    err := client.initialize("/workspace");
+    err := client.initialize("/workspace", "", false);
     asserts::is_true(
         t,
         err == analyzer::AnalyzerError.RemoteError,

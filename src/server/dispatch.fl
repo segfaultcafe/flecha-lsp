@@ -2,6 +2,7 @@ module server;
 
 @imports
     :: root::lsp::lsp
+    :: root::project::context
     :: root::rpc::message;
 
 private error Server::dispatch(
@@ -98,7 +99,17 @@ private error Server::dispatch(
                 "Invalid initialize params"
             );
         } else {
-            responseErr = self->analyzerClient.initialize(params.workspace());
+            packageGraph, hasPackageGraph, graphErr :=
+                context::package_graph(params.workspace());
+            if graphErr != none {
+                responseErr = graphErr;
+            } else {
+                responseErr = self->analyzerClient.initialize(
+                    params.workspace(),
+                    packageGraph.view(),
+                    hasPackageGraph
+                );
+            }
             if responseErr == none {
                 response, responseErr = message::RpcResponse::success(
                     id,
