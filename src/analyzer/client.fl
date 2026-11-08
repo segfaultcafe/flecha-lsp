@@ -125,33 +125,45 @@ private error Client::finishRequest(
     i64 id,
     error previous
 ) {
+    response, exchangeErr := self->exchange(writer, previous);
+    if exchangeErr != none {
+        return exchangeErr;
+    }
+    return Client::validateResponse(response[:], id);
+}
+
+private (own []u8, error) Client::exchange(
+    &self,
+    &json::Writer writer,
+    error previous
+) {
     error err = previous;
     if err == none { err = writer->endObject(); }
     if err != none {
-        return err;
+        return (none, err);
     }
 
     body, serializationErr := writer->finish();
     if serializationErr != none {
-        return serializationErr;
+        return (none, serializationErr);
     }
     writeErr := self->output.writeMessage(body[:]);
     if writeErr != none {
-        return writeErr;
+        return (none, writeErr);
     }
     flushErr := self->output.flush();
     if flushErr != none {
-        return flushErr;
+        return (none, flushErr);
     }
 
     response, hasResponse, readErr := self->input.readMessage();
     if readErr != none {
-        return readErr;
+        return (none, readErr);
     }
     if !hasResponse {
-        return AnalyzerError.UnexpectedEof;
+        return (none, AnalyzerError.UnexpectedEof);
     }
-    return Client::validateResponse(response[:], id);
+    return (response, none);
 }
 
 private error Client::validateResponse([]const u8 source, i64 expectedId) {

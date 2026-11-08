@@ -132,3 +132,60 @@ test rejects_remote_errors(&testing::UnitTest t) {
         "backend JSON-RPC errors are not mistaken for success"
     );
 }
+
+test parses_diagnostics_snapshots(&testing::UnitTest t) {
+    const stringv RESPONSE =
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{" +
+            "\"path\":\"/workspace/main.fl\",\"version\":7," +
+            "\"diagnostics\":[{\"code\":\"FLECHA-L0001\"," +
+            "\"file\":\"/workspace/main.fl\",\"startByte\":13," +
+            "\"endByte\":14,\"severity\":\"error\"," +
+            "\"message\":\"unexpected character\"}]}}"
+        ).view();
+    responses := "Content-Length: 223\r\n\r\n" + RESPONSE;
+    responseBytes := responses.view().cast<[]const u8>;
+    usize position = 0;
+    input := stream::Reader::init(
+        [&const responseBytes, &position](destination) => {
+            return read_source(responseBytes, &position, destination);
+        }
+    );
+    output := stream::Writer::init((source) => {
+        return (source.len(), none);
+    });
+
+    client, constructionErr := analyzer::Client::fromStreams(input, output);
+    if constructionErr != none {
+        asserts::is_true(t, false, "the analyzer client is constructed");
+        return;
+    }
+    snapshot, err := client.diagnostics("/workspace/main.fl");
+    asserts::is_true(
+        t,
+        err == none and snapshot.version() == 7 and
+            snapshot.diagnostics().len() == 1,
+        "the diagnostics result envelope parses"
+    );
+    if err == none and snapshot.diagnostics().len() == 1 {
+        diagnostic := snapshot.diagnostics()[0];
+        asserts::string_equal(
+            t,
+            diagnostic.code(),
+            "FLECHA-L0001",
+            "the diagnostic code is preserved"
+        );
+        asserts::is_true(
+            t,
+            diagnostic.startByte() == 13 and diagnostic.endByte() == 14 and
+                diagnostic.severity() == analyzer::DiagnosticSeverity.Error,
+            "offsets and severity are preserved"
+        );
+        asserts::string_equal(
+            t,
+            diagnostic.message(),
+            "unexpected character",
+            "the diagnostic message is preserved"
+        );
+    }
+}
