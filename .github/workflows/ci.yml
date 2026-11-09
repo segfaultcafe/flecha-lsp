@@ -1,0 +1,101 @@
+name: Pull request validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packages:
+    uses: ./.github/workflows/package.yml
+
+  analyzer-e2e:
+    name: Analyzer bridge end to end
+    needs: packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out flecha-lsp
+        uses: actions/checkout@v4
+        with:
+          path: flecha-lsp
+
+      - name: Install the qualified analyzer toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD/flecha-lsp/.release/toolchain"
+          archive="$root/flecha-0.3.2-Linux-x86_64.tar.gz"
+          mkdir -p "$root/extracted"
+          curl --fail --location --retry 3 \
+            https://github.com/segfaultcafe/flecha/releases/download/v0.3.2/flecha-0.3.2-Linux-x86_64.tar.gz \
+            --output "$archive"
+          actual="$(cmake -E sha256sum "$archive" | awk '{print $1}')"
+          test "$actual" = "8a624dcc222931df05a79668d0b9c5eac035737896df502387dabe70620c3e94"
+          (
+            cd "$root/extracted"
+            cmake -E tar xf "$archive"
+          )
+          bundles=("$root/extracted"/flecha-*/)
+          test ${#bundles[@]} -eq 1
+          echo "${bundles[0]}bin" >> "$GITHUB_PATH"
+          echo "FLECHA_COMPILER=${bundles[0]}bin/flecha" >> "$GITHUB_ENV"
+
+      - name: Resolve and build the test workspace
+        working-directory: flecha-lsp
+        run: |
+          longbow fetch
+          longbow build
+
+      - name: Test flecha-lsp with the qualified compiler
+        working-directory: flecha-lsp
+        run: |
+          mapfile -d '' tests < <(find src -name '*_test.fl' -print0 | sort -z)
+          test ${#tests[@]} -gt 0
+          for test_file in "${tests[@]}"; do
+            flecha test "$test_file" \
+              --package-graph target/package-graph.json \
+              --verbose
+          done
+
+      - name: Download the packaged Linux server
+        uses: actions/download-artifact@v4
+        with:
+          name: release-linux-x86_64
+          path: flecha-lsp-package
+
+      - name: Verify and extract the packaged Linux server
+        shell: bash
+        run: |
+          set -euo pipefail
+          archives=(flecha-lsp-package/*.tar.gz)
+          checksums=(flecha-lsp-package/*.tar.gz.sha256)
+          test ${#archives[@]} -eq 1
+          test ${#checksums[@]} -eq 1
+          expected="$(awk '{print $1}' "${checksums[0]}")"
+          actual="$(cmake -E sha256sum "${archives[0]}" | awk '{print $1}')"
+          test "$actual" = "$expected"
+          mkdir flecha-lsp-release
+          (
+            cd flecha-lsp-release
+            cmake -E tar xf "../${archives[0]}"
+          )
+          servers=(flecha-lsp-release/flecha-lsp-*/bin/flecha-lsp)
+          test ${#servers[@]} -eq 1
+          echo "FLECHA_LSP=$PWD/${servers[0]}" >> "$GITHUB_ENV"
+
+      - name: Exercise the real analyzer bridge
+        working-directory: flecha-lsp
+        run: >-
+          python3 tools/e2e.py
+          --server "$FLECHA_LSP"
+          --compiler "$FLECHA_COMPILER"

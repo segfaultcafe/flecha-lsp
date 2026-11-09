@@ -1,0 +1,182 @@
+name: Build release packages
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FLECHA_VERSION: "0.3.2"
+
+jobs:
+  build:
+    name: Package (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux-x86_64
+            archive_platform: Linux-x86_64
+            toolchain_asset: flecha-0.3.2-Linux-x86_64.tar.gz
+            toolchain_sha256: 8a624dcc222931df05a79668d0b9c5eac035737896df502387dabe70620c3e94
+            archive_format: tar.gz
+            suffix: ""
+          - os: windows-2025
+            name: windows-x86_64
+            archive_platform: Windows-AMD64
+            toolchain_asset: flecha-0.3.2-Windows-AMD64.zip
+            toolchain_sha256: 7a2151cb4b9d1a2a00268b0a25a8757c92a4e25fed638fca9d8b9cb6a7cd3e77
+            archive_format: zip
+            suffix: .exe
+          - os: macos-15-intel
+            name: macos-x86_64
+            archive_platform: Darwin-x86_64
+            toolchain_asset: flecha-0.3.2-Darwin-x86_64.tar.gz
+            toolchain_sha256: 49998ca2edb62eea7fb5fb3b41a2f59d0a81abc586688c825e3d157c5cbf403f
+            archive_format: tar.gz
+            suffix: ""
+          - os: macos-15
+            name: macos-arm64
+            archive_platform: Darwin-arm64
+            toolchain_asset: flecha-0.3.2-Darwin-arm64.tar.gz
+            toolchain_sha256: cd3f50ce72da18bed45ba0b055cb69d660d6d47bd7384806bb3e9cb518c3c382
+            archive_format: tar.gz
+            suffix: ""
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux host linker
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libc6-dev
+          echo "FLECHA_HOST_CXX=/usr/bin/clang++-18" >> "$GITHUB_ENV"
+
+      - name: Install Windows host linker
+        if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-clang
+
+      - name: Select Windows host linker
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $prefix = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'ucrt64\bin'
+          $prefix | Out-File -FilePath $env:GITHUB_PATH -Append
+          $compiler = (Join-Path $prefix 'clang++.exe') -replace '\\', '/'
+          "FLECHA_HOST_CXX=$compiler" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $runtime = $prefix -replace '\\', '/'
+          "FLECHA_RUNTIME_DIR=$runtime" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Select macOS host linker
+        if: runner.os == 'macOS'
+        run: |
+          xcode_root="/Applications/Xcode_16.4.app/Contents/Developer"
+          test -d "$xcode_root"
+          echo "DEVELOPER_DIR=$xcode_root" >> "$GITHUB_ENV"
+          echo "FLECHA_HOST_CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
+
+      - name: Install the pinned Flecha toolchain
+        shell: bash
+        env:
+          TOOLCHAIN_ASSET: ${{ matrix.toolchain_asset }}
+          TOOLCHAIN_SHA256: ${{ matrix.toolchain_sha256 }}
+        run: |
+          set -euo pipefail
+          root="$PWD/.release/toolchain"
+          archive="$root/$TOOLCHAIN_ASSET"
+          mkdir -p "$root/extracted"
+          curl --fail --location --retry 3 \
+            "https://github.com/segfaultcafe/flecha/releases/download/v${FLECHA_VERSION}/${TOOLCHAIN_ASSET}" \
+            --output "$archive"
+          actual="$(cmake -E sha256sum "$archive" | awk '{print $1}')"
+          test "$actual" = "$TOOLCHAIN_SHA256"
+          (
+            cd "$root/extracted"
+            cmake -E tar xf "$archive"
+          )
+          bundles=("$root/extracted"/flecha-*/)
+          if [[ ${#bundles[@]} -ne 1 ]]; then
+            echo "Expected exactly one Flecha toolchain bundle" >&2
+            exit 1
+          fi
+          echo "${bundles[0]}bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain
+        shell: bash
+        run: |
+          test "$(flecha --version)" = "flecha ${FLECHA_VERSION}"
+          test "$(longbow --version)" = "longbow ${FLECHA_VERSION}"
+
+      - name: Resolve and build
+        shell: bash
+        run: |
+          longbow fetch
+          longbow build
+          test -f "target/flecha-lsp${{ matrix.suffix }}"
+
+      - name: Read package metadata
+        id: metadata
+        shell: bash
+        env:
+          ARCHIVE_PLATFORM: ${{ matrix.archive_platform }}
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' longbow.toml)"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "bundle=flecha-lsp-${version}-${ARCHIVE_PLATFORM}" >> "$GITHUB_OUTPUT"
+
+      - name: Stage relocatable bundle
+        shell: bash
+        run: >-
+          cmake
+          "-DEXECUTABLE=$PWD/target/flecha-lsp${{ matrix.suffix }}"
+          "-DEXECUTABLE_SUFFIX=${{ matrix.suffix }}"
+          "-DSOURCE_ROOT=$PWD"
+          "-DOUTPUT_ROOT=$PWD/.release/stage"
+          "-DVERSION=${{ steps.metadata.outputs.version }}"
+          "-DARCHIVE_PLATFORM=${{ matrix.archive_platform }}"
+          "-DRUNTIME_SEARCH_DIRECTORY=${FLECHA_RUNTIME_DIR:-}"
+          -P cmake/stage_release.cmake
+
+      - name: Create release archive and checksum
+        shell: bash
+        env:
+          ARCHIVE_FORMAT: ${{ matrix.archive_format }}
+          BUNDLE: ${{ steps.metadata.outputs.bundle }}
+        run: |
+          set -euo pipefail
+          release_root="$PWD/.release"
+          mkdir -p "$release_root/artifacts"
+          if [[ "$ARCHIVE_FORMAT" == "zip" ]]; then
+            filename="${BUNDLE}.zip"
+            (
+              cd "$release_root/stage"
+              cmake -E tar cf "$release_root/artifacts/$filename" --format=zip "$BUNDLE"
+            )
+          else
+            filename="${BUNDLE}.tar.gz"
+            (
+              cd "$release_root/stage"
+              cmake -E tar czf "$release_root/artifacts/$filename" "$BUNDLE"
+            )
+          fi
+          (
+            cd "$release_root/artifacts"
+            cmake -E sha256sum "$filename" > "$filename.sha256"
+          )
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: ${{ github.workspace }}/.release/artifacts/*
+          if-no-files-found: error
