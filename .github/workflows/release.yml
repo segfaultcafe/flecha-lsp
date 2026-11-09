@@ -1,0 +1,62 @@
+name: Publish release packages
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate release source
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require a version tag on the current main head
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must use the form vX.Y.Z" >&2
+            exit 1
+          fi
+          git fetch origin main
+          tag_commit="$(git rev-parse 'HEAD^{commit}')"
+          main_commit="$(git rev-parse 'origin/main^{commit}')"
+          test "$tag_commit" = "$main_commit"
+          manifest_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' longbow.toml)"
+          test "v${manifest_version}" = "$GITHUB_REF_NAME"
+
+  packages:
+    needs: validate
+    uses: ./.github/workflows/package.yml
+
+  publish:
+    name: Attach packages to GitHub Release
+    needs: packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Assemble and upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat release-assets/*.sha256 | sort > release-assets/SHA256SUMS
+          gh release upload \
+            "${{ github.event.release.tag_name }}" \
+            release-assets/*.tar.gz \
+            release-assets/*.zip \
+            release-assets/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

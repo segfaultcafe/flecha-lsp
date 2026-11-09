@@ -1,0 +1,73 @@
+name: Pull request validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packages:
+    uses: ./.github/workflows/package.yml
+
+  analyzer-e2e:
+    name: Analyzer bridge end to end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ANALYZER_COMMIT: 03f4f56a8d328bea194cb492d590e8df6dd9bb0e
+    steps:
+      - name: Check out flecha-lsp
+        uses: actions/checkout@v4
+        with:
+          path: flecha-lsp
+
+      - name: Check out the analyzer compiler
+        uses: actions/checkout@v4
+        with:
+          repository: segfaultcafe/flecha
+          ref: ${{ env.ANALYZER_COMMIT }}
+          path: flecha
+
+      - name: Install compiler build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-14 g++-14 llvm-18-dev ninja-build
+
+      - name: Build the analyzer compiler and Longbow
+        run: |
+          cmake -S flecha -B flecha/build -G Ninja \
+            -DBUILD_TESTING=OFF \
+            -DCMAKE_C_COMPILER=/usr/bin/gcc-14 \
+            -DCMAKE_CXX_COMPILER=/usr/bin/g++-14 \
+            "-DLLVM_DIR=$(/usr/bin/llvm-config-18 --cmakedir)"
+          cmake --build flecha/build --target flecha longbow --parallel
+
+      - name: Build and test flecha-lsp
+        working-directory: flecha-lsp
+        env:
+          FLECHA_COMPILER: ${{ github.workspace }}/flecha/build/flecha
+          FLECHA_STANDARD_LIBRARY: ${{ github.workspace }}/flecha/std/src
+          FLECHA_HOST_CXX: /usr/bin/g++-14
+        run: |
+          ../flecha/build/longbow fetch
+          ../flecha/build/longbow check
+          ../flecha/build/longbow test --verbose
+          ../flecha/build/longbow build
+
+      - name: Exercise the real analyzer bridge
+        working-directory: flecha-lsp
+        env:
+          FLECHA_STANDARD_LIBRARY: ${{ github.workspace }}/flecha/std/src
+        run: >-
+          python3 tools/e2e.py
+          --server target/flecha-lsp
+          --compiler ../flecha/build/flecha
