@@ -50,9 +50,11 @@ jobs:
           echo "${bundles[0]}bin" >> "$GITHUB_PATH"
           echo "FLECHA_COMPILER=${bundles[0]}bin/flecha" >> "$GITHUB_ENV"
 
-      - name: Resolve flecha-lsp dependencies
+      - name: Resolve and build the test workspace
         working-directory: flecha-lsp
-        run: longbow fetch
+        run: |
+          longbow fetch
+          longbow build
 
       - name: Test flecha-lsp with the qualified compiler
         working-directory: flecha-lsp
