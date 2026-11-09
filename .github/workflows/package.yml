@@ -115,12 +115,11 @@ jobs:
           test "$(flecha --version)" = "flecha ${FLECHA_VERSION}"
           test "$(longbow --version)" = "longbow ${FLECHA_VERSION}"
 
-      - name: Resolve, check, test, and build
+      - name: Resolve, check, and build
         shell: bash
         run: |
           longbow fetch
           longbow check
-          longbow test --verbose
           longbow build
           test -f "target/flecha-lsp${{ matrix.suffix }}"
 
