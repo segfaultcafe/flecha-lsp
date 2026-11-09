@@ -128,8 +128,8 @@ verifies the published diagnostic, and performs the LSP shutdown sequence.
 
 ## Project discovery
 
-On `initialize`, the server converts the client's `rootUri` to an absolute
-workspace path and checks exactly:
+On `initialize`, the server converts the client's non-null `rootUri` (or legacy
+`rootPath`) to an absolute workspace path and checks exactly:
 
 ```text
 <workspace>/target/package-graph.json
@@ -142,6 +142,13 @@ when dependency-aware diagnostics are required.
 
 If the graph is absent, initialization continues and the analyzer uses its
 workspace-based fallback behavior.
+
+Clients may initialize without a workspace by sending null or omitted
+`rootUri` and `rootPath` values. The LSP handshake completes without starting
+the analyzer. When the first document opens, the server walks upward from its
+directory to find the nearest `longbow.toml`; a standalone source uses its
+immediate directory. That discovered directory becomes the analyzer workspace
+for the session.
 
 ## Diagnostics flow
 

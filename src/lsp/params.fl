@@ -11,11 +11,24 @@ module lsp;
 
     string rootUri = none;
     bool hasRootUri;
+    string rootPath = none;
+    bool hasRootPath;
     more, fieldErr := reader.nextObjectField();
     while fieldErr == none and more {
         if reader.keyIs("rootUri") {
-            rootUri, fieldErr = reader.readString();
-            hasRootUri = fieldErr == none;
+            if next_value_is_null(&reader, source) {
+                fieldErr = reader.readNull();
+            } else {
+                rootUri, fieldErr = reader.readString();
+                hasRootUri = fieldErr == none;
+            }
+        } else if reader.keyIs("rootPath") {
+            if next_value_is_null(&reader, source) {
+                fieldErr = reader.readNull();
+            } else {
+                rootPath, fieldErr = reader.readString();
+                hasRootPath = fieldErr == none;
+            }
         } else {
             fieldErr = reader.skipValue();
         }
@@ -24,16 +37,41 @@ module lsp;
         }
     }
 
-    if fieldErr != none or reader.finish() != none or !hasRootUri {
+    if fieldErr != none or reader.finish() != none {
         return (none, LspError.InvalidParams);
     }
-    workspace, uriErr := file_uri_to_path(rootUri.view());
-    if uriErr != none {
-        return (none, uriErr);
+
+    string workspace = none;
+    bool hasWorkspace;
+    if hasRootUri {
+        workspace, fieldErr = file_uri_to_path(rootUri.view());
+        hasWorkspace = fieldErr == none;
+    } else if hasRootPath {
+        workspace = rootPath;
+        hasWorkspace = true;
+    }
+    if fieldErr != none {
+        return (none, fieldErr);
     }
     return (build InitializeParams {
         self.workspaceValue = workspace;
+        self.hasWorkspaceValue = hasWorkspace;
     }, none);
+}
+
+bool next_value_is_null(
+    &const json::Reader reader,
+    []const u8 source
+) {
+    usize position = reader->position();
+    while position < source.len() and
+        (source[position] == 32 or source[position] == 9 or
+         source[position] == 10 or source[position] == 13) {
+        position++;
+    }
+    return source.len() - position >= 4 and
+        source[position] == 110 and source[position + 1] == 117 and
+        source[position + 2] == 108 and source[position + 3] == 108;
 }
 
 (DocumentUpdate, error) DocumentUpdate::parseOpen([]const u8 source) {

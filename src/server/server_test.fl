@@ -231,6 +231,152 @@ test runs_initialize_shutdown_and_exit_end_to_end(
     );
 }
 
+test initializes_a_rootless_session_from_the_first_document(
+    &testing::UnitTest t
+) {
+    const stringv INITIALIZE =
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"," +
+            "\"params\":{\"rootPath\":null,\"rootUri\":null," +
+            "\"workspaceFolders\":null,\"capabilities\":{}}}"
+        ).view();
+    const stringv INITIALIZED =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}";
+    const stringv DID_OPEN =
+        (
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\"," +
+            "\"params\":{\"textDocument\":{" +
+            "\"uri\":\"file:///standalone/main.fl\"," +
+            "\"languageId\":\"flecha\",\"version\":1," +
+            "\"text\":\"module main;\"}}}"
+        ).view();
+    const stringv SHUTDOWN =
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"shutdown\"}";
+    const stringv EXIT =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}";
+    input := (
+        "Content-Length: 130\r\n\r\n" + INITIALIZE +
+        "Content-Length: 52\r\n\r\n" + INITIALIZED +
+        "Content-Length: 168\r\n\r\n" + DID_OPEN +
+        "Content-Length: 44\r\n\r\n" + SHUTDOWN +
+        "Content-Length: 33\r\n\r\n" + EXIT
+    );
+    source := input.view().cast<[]const u8>;
+    usize inputPosition = 0;
+    reader := stream::Reader::init(
+        [&const source, &inputPosition](destination) => {
+            return read_input(source, &inputPosition, destination);
+        }
+    );
+
+    [1024]u8 destination = none;
+    usize outputPosition = 0;
+    writer := stream::Writer::init(
+        [&destination, &outputPosition](bytes) => {
+            loop usize index = 0; index < bytes.len(); index++ {
+                destination[outputPosition + index] = bytes[index];
+            }
+            outputPosition = outputPosition + bytes.len();
+            return (bytes.len(), none);
+        }
+    );
+
+    const stringv ANALYZER_1 =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}";
+    const stringv ANALYZER_2 =
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"status\":\"applied\"}}";
+    const stringv ANALYZER_3 =
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{" +
+            "\"path\":\"/standalone/main.fl\",\"version\":1," +
+            "\"diagnostics\":[]}}"
+        ).view();
+    const stringv ANALYZER_4 =
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":null}";
+    analyzerResponses := (
+        "Content-Length: 36\r\n\r\n" + ANALYZER_1 +
+        "Content-Length: 54\r\n\r\n" + ANALYZER_2 +
+        "Content-Length: 93\r\n\r\n" + ANALYZER_3 +
+        "Content-Length: 38\r\n\r\n" + ANALYZER_4
+    );
+    analyzerSource := analyzerResponses.view().cast<[]const u8>;
+    usize analyzerInputPosition = 0;
+    analyzerInput := stream::Reader::init(
+        [&const analyzerSource, &analyzerInputPosition](destination) => {
+            return read_input(
+                analyzerSource,
+                &analyzerInputPosition,
+                destination
+            );
+        }
+    );
+    [1024]u8 analyzerDestination = none;
+    usize analyzerOutputPosition = 0;
+    analyzerOutput := stream::Writer::init(
+        [&analyzerDestination, &analyzerOutputPosition](bytes) => {
+            loop usize index = 0; index < bytes.len(); index++ {
+                analyzerDestination[analyzerOutputPosition + index] =
+                    bytes[index];
+            }
+            analyzerOutputPosition = analyzerOutputPosition + bytes.len();
+            return (bytes.len(), none);
+        }
+    );
+
+    instance, constructionErr := server::Server::fromStreams(
+        reader,
+        writer,
+        analyzerInput,
+        analyzerOutput
+    );
+    asserts::is_true(
+        t,
+        constructionErr == none,
+        "the rootless server is constructed over in-memory streams"
+    );
+    if constructionErr != none {
+        return;
+    }
+
+    runErr := instance.run();
+    asserts::is_true(t, runErr == none, "the rootless LSP flow succeeds");
+    asserts::is_true(
+        t,
+        instance.state() == server::ServerState.Exited,
+        "the rootless session shuts down and exits"
+    );
+
+    outputText := destination[:outputPosition].cast<stringv>;
+    asserts::is_true(
+        t,
+        strings::contains(outputText, "\"id\":1,\"result\"") and
+            strings::contains(
+                outputText,
+                "\"uri\":\"file:///standalone/main.fl\""
+            ) and
+            strings::contains(outputText, "\"diagnostics\":[]") and
+            strings::contains(outputText, "\"id\":2,\"result\":null"),
+        "rootless initialize, diagnostics, and shutdown receive responses"
+    );
+
+    analyzerText := analyzerDestination[:analyzerOutputPosition].cast<stringv>;
+    asserts::is_true(
+        t,
+        strings::contains(analyzerText, "\"method\":\"initialize\"") and
+            strings::contains(
+                analyzerText,
+                "\"workspace\":\"/standalone\""
+            ) and
+            strings::contains(analyzerText, "\"method\":\"document/open\"") and
+            strings::contains(
+                analyzerText,
+                "\"method\":\"document/diagnostics\""
+            ) and
+            strings::contains(analyzerText, "\"method\":\"shutdown\""),
+        "the first document lazily initializes the analyzer workspace"
+    );
+}
+
 test returns_method_not_found_only_for_requests(
     &testing::UnitTest t
 ) {

@@ -8,7 +8,10 @@ export error LspError {
 }
 
 export structure InitializeParams {
-    private string workspaceValue;
+    private {
+        string workspaceValue;
+        bool hasWorkspaceValue;
+    }
 };
 
 export structure DocumentUpdate {
@@ -36,6 +39,10 @@ export structure Position {
 
 stringv InitializeParams::workspace(&const self) <-self {
     return self->workspaceValue.view();
+}
+
+bool InitializeParams::hasWorkspace(&const self) {
+    return self->hasWorkspaceValue;
 }
 
 stringv DocumentUpdate::uri(&const self) <-self {

@@ -17,6 +17,7 @@ test parses_initialize_and_file_uris(&testing::UnitTest t) {
             "/home/alex/My Project",
             "file URI percent encoding is decoded"
         );
+        asserts::is_true(t, params.hasWorkspace(), "rootUri defines a workspace");
     }
 
     _, unsupportedErr := lsp::InitializeParams::parse(
@@ -27,6 +28,38 @@ test parses_initialize_and_file_uris(&testing::UnitTest t) {
         unsupportedErr == lsp::LspError.UnsupportedUri,
         "non-file workspaces are rejected"
     );
+}
+
+test accepts_initialize_without_a_workspace(&testing::UnitTest t) {
+    params, err := lsp::InitializeParams::parse(
+        (
+            "{\"processId\":1,\"rootPath\":null,\"rootUri\":null," +
+            "\"workspaceFolders\":null,\"capabilities\":{}}"
+        ).view().cast<[]const u8>
+    );
+    legacy, legacyErr := lsp::InitializeParams::parse(
+        "{\"rootPath\":\"/legacy/workspace\",\"rootUri\":null}"
+            .cast<[]const u8>
+    );
+
+    asserts::is_true(
+        t,
+        err == none and !params.hasWorkspace(),
+        "null LSP roots defer workspace selection"
+    );
+    asserts::is_true(
+        t,
+        legacyErr == none and legacy.hasWorkspace(),
+        "legacy rootPath remains supported"
+    );
+    if legacyErr == none {
+        asserts::string_equal(
+            t,
+            legacy.workspace(),
+            "/legacy/workspace",
+            "rootPath supplies the legacy workspace"
+        );
+    }
 }
 
 test parses_full_document_open_change_and_close(&testing::UnitTest t) {

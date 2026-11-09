@@ -29,6 +29,17 @@ private error Server::dispatch(
             if parseErr != none {
                 return none;
             }
+            if !self->analyzerInitializedValue {
+                workspace, workspaceErr :=
+                    context::document_workspace(update.path());
+                if workspaceErr != none {
+                    return workspaceErr;
+                }
+                analyzerErr := self->initializeAnalyzer(workspace.view());
+                if analyzerErr != none {
+                    return analyzerErr;
+                }
+            }
             analyzerErr := self->analyzerClient.openDocument(
                 update.path(),
                 update.version(),
@@ -99,16 +110,8 @@ private error Server::dispatch(
                 "Invalid initialize params"
             );
         } else {
-            packageGraph, hasPackageGraph, graphErr :=
-                context::package_graph(params.workspace());
-            if graphErr != none {
-                responseErr = graphErr;
-            } else {
-                responseErr = self->analyzerClient.initialize(
-                    params.workspace(),
-                    packageGraph.view(),
-                    hasPackageGraph
-                );
+            if params.hasWorkspace() {
+                responseErr = self->initializeAnalyzer(params.workspace());
             }
             if responseErr == none {
                 response, responseErr = message::RpcResponse::success(
@@ -124,7 +127,9 @@ private error Server::dispatch(
             self->stateValue = ServerState.Initializing;
         }
     } else if METHOD == "shutdown" {
-        responseErr = self->analyzerClient.shutdown();
+        if self->analyzerInitializedValue {
+            responseErr = self->analyzerClient.shutdown();
+        }
         if responseErr == none {
             response, responseErr = message::RpcResponse::success(
                 id,
@@ -146,4 +151,21 @@ private error Server::dispatch(
         return responseErr;
     }
     return self->writeResponse(&response);
+}
+
+private error Server::initializeAnalyzer(&self, stringv workspace) {
+    packageGraph, hasPackageGraph, graphErr :=
+        context::package_graph(workspace);
+    if graphErr != none {
+        return graphErr;
+    }
+    analyzerErr := self->analyzerClient.initialize(
+        workspace,
+        packageGraph.view(),
+        hasPackageGraph
+    );
+    if analyzerErr == none {
+        self->analyzerInitializedValue = true;
+    }
+    return analyzerErr;
 }
