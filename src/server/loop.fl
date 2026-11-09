@@ -35,6 +35,7 @@ module server;
         self.output = writer;
         self.analyzerClient = analyzerClient;
         self.stateValue = ServerState.Uninitialized;
+        self.analyzerInitializedValue = false;
     }, none);
 }
 

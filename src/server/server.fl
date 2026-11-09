@@ -18,6 +18,7 @@ export structure Server {
         framing::FramedWriter output;
         analyzer::Client analyzerClient;
         ServerState stateValue;
+        bool analyzerInitializedValue;
     }
 };
 

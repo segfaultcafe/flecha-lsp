@@ -2,7 +2,8 @@ module context;
 
 @imports
     :: lib::std::io::filesystem
-    :: lib::std::io::path;
+    :: lib::std::io::path
+    :: lib::std::text::strings;
 
 // Finds Longbow's resolved package graph without triggering a build. An absent
 // graph keeps the analyzer's legacy workspace behavior.
@@ -20,4 +21,56 @@ export (string, bool, error) package_graph(stringv workspace) {
         return (none, false, existsErr);
     }
     return (graph, present, none);
+}
+
+// Finds the nearest Longbow workspace containing a document. Standalone
+// sources fall back to their immediate directory.
+export (string, error) document_workspace(stringv document) {
+    fallback, copyErr := strings::string_from_bytes(
+        path::parent(document).cast<[]const u8>
+    );
+    if copyErr != none {
+        return (none, copyErr);
+    }
+    candidate, copyErr := strings::string_from_bytes(
+        fallback.view().cast<[]const u8>
+    );
+    if copyErr != none {
+        return (none, copyErr);
+    }
+
+    while candidate.len() > 0 {
+        marker, joinErr := path::join(candidate.view(), "longbow.toml");
+        if joinErr != none {
+            return (none, joinErr);
+        }
+        present, existsErr := filesystem::exists(marker.view());
+        if existsErr != none {
+            return (none, existsErr);
+        }
+        if present {
+            return (candidate, none);
+        }
+
+        string parentCandidate = none;
+        bool reachedRoot;
+        {
+            const stringv PARENT = path::parent(candidate.view());
+            reachedRoot = PARENT == candidate.view();
+            if !reachedRoot {
+                parentCandidate, copyErr = strings::string_from_bytes(
+                    PARENT.cast<[]const u8>
+                );
+            }
+        }
+        if copyErr != none {
+            return (none, copyErr);
+        }
+        if reachedRoot {
+            break;
+        }
+        candidate = parentCandidate;
+    }
+
+    return (fallback, none);
 }
