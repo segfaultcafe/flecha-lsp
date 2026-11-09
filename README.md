@@ -66,7 +66,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for protocol and module details and
 
 ## Requirements
 
-- Flecha and Longbow 0.3.1, or a compatible 0.3.x toolchain, to build the
+- Flecha and Longbow 0.3.2, or a compatible newer 0.3.x toolchain, to build the
   server;
 - a Flecha compiler that implements `flecha analyze --stdio` protocol 1.0;
 - access to the Flecha registry when `flecha/json` is not already cached; and
@@ -83,10 +83,9 @@ flecha analyze --stdio
 The last command waits for framed protocol input. Appearing idle is expected;
 terminate that manual probe with Ctrl-C.
 
-The analyzer backend was merged after Flecha 0.3.1. Until a newer compiler
-release includes it, run `flecha-lsp` with a compiler built from Flecha commit
-`03f4f56` or later. Release qualification exercises that exact compiler commit
-through a real child process rather than a mock protocol endpoint.
+Flecha 0.3.2 is the first compiler release that provides the analyzer backend.
+Release qualification exercises that published compiler through a real child
+process rather than a mock protocol endpoint.
 
 By default the server resolves `flecha` from `PATH`. To select another compiler:
 
@@ -123,10 +122,9 @@ the published `SHA256SUMS`, extract it, and place its `bin` directory on the
 editor's `PATH`.
 
 The release pipeline builds and tests each native executable using the pinned
-Flecha 0.3.1 build toolchain. A separate end-to-end gate builds the analyzer
-compiler from the qualified commit, starts both real processes, opens a
-document containing a semantic error, verifies the published diagnostic, and
-performs the LSP shutdown sequence.
+Flecha 0.3.2 toolchain. A separate end-to-end gate starts the packaged server
+with that published compiler, opens a document containing a semantic error,
+verifies the published diagnostic, and performs the LSP shutdown sequence.
 
 ## Project discovery
 

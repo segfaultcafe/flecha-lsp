@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 env:
-  FLECHA_VERSION: "0.3.1"
+  FLECHA_VERSION: "0.3.2"
 
 jobs:
   build:
@@ -20,29 +20,29 @@ jobs:
           - os: ubuntu-24.04
             name: linux-x86_64
             archive_platform: Linux-x86_64
-            toolchain_asset: flecha-0.3.1-Linux-x86_64.tar.gz
-            toolchain_sha256: 395887d666bdc400df2ced0081ad7fd87181d99e95510919b0d0796f88fcfce6
+            toolchain_asset: flecha-0.3.2-Linux-x86_64.tar.gz
+            toolchain_sha256: 8a624dcc222931df05a79668d0b9c5eac035737896df502387dabe70620c3e94
             archive_format: tar.gz
             suffix: ""
           - os: windows-2025
             name: windows-x86_64
             archive_platform: Windows-AMD64
-            toolchain_asset: flecha-0.3.1-Windows-AMD64.zip
-            toolchain_sha256: 22c21b783a352d6d51f489004eb8041165e968dea9ff70b573463cd5b59a9916
+            toolchain_asset: flecha-0.3.2-Windows-AMD64.zip
+            toolchain_sha256: 7a2151cb4b9d1a2a00268b0a25a8757c92a4e25fed638fca9d8b9cb6a7cd3e77
             archive_format: zip
             suffix: .exe
           - os: macos-15-intel
             name: macos-x86_64
             archive_platform: Darwin-x86_64
-            toolchain_asset: flecha-0.3.1-Darwin-x86_64.tar.gz
-            toolchain_sha256: ffa6951c0782117dff70335a895d96c0bd54f1d5baf231981641c09295141db0
+            toolchain_asset: flecha-0.3.2-Darwin-x86_64.tar.gz
+            toolchain_sha256: 49998ca2edb62eea7fb5fb3b41a2f59d0a81abc586688c825e3d157c5cbf403f
             archive_format: tar.gz
             suffix: ""
           - os: macos-15
             name: macos-arm64
             archive_platform: Darwin-arm64
-            toolchain_asset: flecha-0.3.1-Darwin-arm64.tar.gz
-            toolchain_sha256: 222fb998ba759bc2a9a9bb25fcbb6fe06a85dc58bc80376bea76c4985726f4d3
+            toolchain_asset: flecha-0.3.2-Darwin-arm64.tar.gz
+            toolchain_sha256: cd3f50ce72da18bed45ba0b055cb69d660d6d47bd7384806bb3e9cb518c3c382
             archive_format: tar.gz
             suffix: ""
     runs-on: ${{ matrix.os }}
