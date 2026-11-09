@@ -40,6 +40,7 @@ file(COPY_FILE
 )
 
 set(runtimeDependencyFilters)
+set(runtimeDependencyDirectories)
 if(WIN32)
     list(APPEND runtimeDependencyFilters
         PRE_EXCLUDE_REGEXES
@@ -49,6 +50,12 @@ if(WIN32)
         "[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\]([Ss][Yy][Ss][Tt][Ee][Mm]32|[Ss][Yy][Ss][Ww][Oo][Ww]64)[/\\\\]"
     )
 endif()
+if(DEFINED RUNTIME_SEARCH_DIRECTORY AND
+        NOT "${RUNTIME_SEARCH_DIRECTORY}" STREQUAL "")
+    list(APPEND runtimeDependencyDirectories
+        DIRECTORIES "${RUNTIME_SEARCH_DIRECTORY}"
+    )
+endif()
 
 file(GET_RUNTIME_DEPENDENCIES
     EXECUTABLES "${EXECUTABLE}"
@@ -56,6 +63,7 @@ file(GET_RUNTIME_DEPENDENCIES
     UNRESOLVED_DEPENDENCIES_VAR unresolvedDependencies
     CONFLICTING_DEPENDENCIES_PREFIX dependencyConflicts
     ${runtimeDependencyFilters}
+    ${runtimeDependencyDirectories}
 )
 
 if(unresolvedDependencies)

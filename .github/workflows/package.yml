@@ -74,6 +74,8 @@ jobs:
           $prefix | Out-File -FilePath $env:GITHUB_PATH -Append
           $compiler = (Join-Path $prefix 'clang++.exe') -replace '\\', '/'
           "FLECHA_HOST_CXX=$compiler" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $runtime = $prefix -replace '\\', '/'
+          "FLECHA_RUNTIME_DIR=$runtime" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Select macOS host linker
         if: runner.os == 'macOS'
@@ -143,6 +145,7 @@ jobs:
           "-DOUTPUT_ROOT=$PWD/.release/stage"
           "-DVERSION=${{ steps.metadata.outputs.version }}"
           "-DARCHIVE_PLATFORM=${{ matrix.archive_platform }}"
+          "-DRUNTIME_SEARCH_DIRECTORY=${FLECHA_RUNTIME_DIR:-}"
           -P cmake/stage_release.cmake
 
       - name: Create release archive and checksum
