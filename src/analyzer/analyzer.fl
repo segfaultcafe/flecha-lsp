@@ -47,6 +47,10 @@ stringv Diagnostic::code(&const self) <-self {
     return self->codeValue.view();
 }
 
+stringv Diagnostic::file(&const self) <-self {
+    return self->fileValue.view();
+}
+
 usize Diagnostic::startByte(&const self) {
     return self->startByteValue;
 }
