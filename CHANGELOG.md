@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 - 2026-11-14
+
+- Suppress analyzer diagnostics whose snapshot version no longer matches the
+  editor document, preventing transient results from replacing current state.
+- Cover superseded and current snapshots in the end-to-end LSP lifecycle test.
+
 ## 0.1.0 - 2026-11-09
 
 - Implement JSON-RPC 2.0 and LSP `Content-Length` framing over standard IO.

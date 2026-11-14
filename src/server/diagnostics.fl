@@ -10,6 +10,10 @@ private error Server::publishDiagnostics(
     &const lsp::DocumentUpdate document,
     &const analyzer::DiagnosticsSnapshot snapshot
 ) {
+    if snapshot->version() != document->version() {
+        return none;
+    }
+
     writer := json::Writer::init();
     err := Server::beginNotification(
         &writer,
