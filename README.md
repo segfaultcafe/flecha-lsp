@@ -157,8 +157,10 @@ For an open or changed document, the server performs this lockstep sequence:
 1. decode the `file://` URI and full document text;
 2. send `document/open` or `document/change` to the analyzer;
 3. request `document/diagnostics`;
-4. convert `startByte` and `endByte` to zero-based LSP line/UTF-16 positions;
-5. publish `textDocument/publishDiagnostics` with the document version.
+4. discard the snapshot when its analyzer version does not match the current
+   document version;
+5. convert `startByte` and `endByte` to zero-based LSP line/UTF-16 positions;
+6. publish `textDocument/publishDiagnostics` with the document version.
 
 On `didClose`, the overlay is removed from the analyzer and the LSP publishes
 an empty diagnostic list for that URI.
@@ -173,8 +175,6 @@ an empty diagnostic list for that URI.
 - there is no cancellation, background debounce, analyzer restart, or
   multi-workspace process pool;
 - lifecycle ordering is tracked but not yet exhaustively rejected;
-- analyzer snapshot versions are parsed, but stale-result suppression is not
-  implemented yet; and
 - VS Code requires a client extension; this repository does not ship one yet.
 
 ## Repository layout
