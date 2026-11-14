@@ -159,8 +159,10 @@ For an open or changed document, the server performs this lockstep sequence:
 3. request `document/diagnostics`;
 4. discard the snapshot when its analyzer version does not match the current
    document version;
-5. convert `startByte` and `endByte` to zero-based LSP line/UTF-16 positions;
-6. publish `textDocument/publishDiagnostics` with the document version.
+5. discard diagnostics attributed to another source file so their byte offsets
+   are never interpreted against the current document;
+6. convert `startByte` and `endByte` to zero-based LSP line/UTF-16 positions;
+7. publish `textDocument/publishDiagnostics` with the document version.
 
 On `didClose`, the overlay is removed from the analyzer and the LSP publishes
 an empty diagnostic list for that URI.

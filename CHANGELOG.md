@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 - 2026-11-14
+
+- Route diagnostics only to their matching document instead of interpreting
+  dependency-file byte offsets against the active editor buffer.
+- Preserve and test analyzer diagnostic source paths through publication.
+
 ## 0.1.1 - 2026-11-14
 
 - Suppress analyzer diagnostics whose snapshot version no longer matches the
