@@ -24,7 +24,7 @@ module server_test;
     return (count, none);
 }
 
-test runs_initialize_shutdown_and_exit_end_to_end(
+test runs_the_lifecycle_and_drops_superseded_diagnostics(
     &testing::UnitTest t
 ) {
     const stringv INITIALIZE =
@@ -96,7 +96,7 @@ test runs_initialize_shutdown_and_exit_end_to_end(
     const stringv ANALYZER_3 =
         (
             "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{" +
-            "\"path\":\"/workspace/main.fl\",\"version\":1," +
+            "\"path\":\"/workspace/main.fl\",\"version\":0," +
             "\"diagnostics\":[{\"code\":\"FLECHA-S0001\"," +
             "\"file\":\"/workspace/main.fl\",\"startByte\":7," +
             "\"endByte\":11,\"severity\":\"error\"," +
@@ -177,17 +177,6 @@ test runs_initialize_shutdown_and_exit_end_to_end(
         ).view();
     const stringv SHUTDOWN_RESPONSE =
         "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":null}";
-    const stringv OPEN_DIAGNOSTICS =
-        (
-            "{\"jsonrpc\":\"2.0\"," +
-            "\"method\":\"textDocument/publishDiagnostics\"," +
-            "\"params\":{\"uri\":\"file:///workspace/main.fl\"," +
-            "\"version\":1,\"diagnostics\":[{\"range\":{" +
-            "\"start\":{\"line\":0,\"character\":7}," +
-            "\"end\":{\"line\":0,\"character\":11}}," +
-            "\"severity\":1,\"code\":\"FLECHA-S0001\"," +
-            "\"source\":\"flecha\",\"message\":\"bad module\"}]}}"
-        ).view();
     const stringv CHANGE_DIAGNOSTICS =
         (
             "{\"jsonrpc\":\"2.0\"," +
@@ -204,7 +193,6 @@ test runs_initialize_shutdown_and_exit_end_to_end(
         ).view();
     expected := (
         "Content-Length: 73\r\n\r\n" + INITIALIZE_RESPONSE +
-        "Content-Length: 286\r\n\r\n" + OPEN_DIAGNOSTICS +
         "Content-Length: 134\r\n\r\n" + CHANGE_DIAGNOSTICS +
         "Content-Length: 122\r\n\r\n" + CLOSE_DIAGNOSTICS +
         "Content-Length: 38\r\n\r\n" + SHUTDOWN_RESPONSE
@@ -213,7 +201,14 @@ test runs_initialize_shutdown_and_exit_end_to_end(
         t,
         destination[:outputPosition],
         expected.view().cast<[]const u8>,
-        "requests receive framed responses while notifications stay silent"
+        "only diagnostics for the current document version are published"
+    );
+    outputText := destination[:outputPosition].cast<stringv>;
+    asserts::is_true(
+        t,
+        !strings::contains(outputText, "bad module") and
+            strings::contains(outputText, "\"version\":2"),
+        "a superseded analyzer snapshot never reaches the editor"
     );
     analyzerText := analyzerDestination[:analyzerOutputPosition].cast<stringv>;
     asserts::is_true(
