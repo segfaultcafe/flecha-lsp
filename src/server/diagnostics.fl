@@ -31,6 +31,10 @@ private error Server::publishDiagnostics(
     diagnostics := snapshot->diagnostics();
     loop usize index = 0; err == none and index < diagnostics.len(); index++ {
         diagnostic := &diagnostics[index];
+        if diagnostic->file() != document->path() {
+            proceed;
+        }
+
         start, startErr := lsp::Position::at(
             document->text(),
             diagnostic->startByte()

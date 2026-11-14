@@ -108,7 +108,14 @@ test runs_the_lifecycle_and_drops_superseded_diagnostics(
         (
             "{\"jsonrpc\":\"2.0\",\"id\":5,\"result\":{" +
             "\"path\":\"/workspace/main.fl\",\"version\":2," +
-            "\"diagnostics\":[]}}"
+            "\"diagnostics\":[{\"code\":\"FLECHA-S0045\"," +
+            "\"file\":\"/workspace/writer.fl\",\"startByte\":10," +
+            "\"endByte\":18,\"severity\":\"warning\"," +
+            "\"message\":\"structure 'Writer' is not trivially zeroed\"}," +
+            "{\"code\":\"FLECHA-S0002\"," +
+            "\"file\":\"/workspace/main.fl\",\"startByte\":7," +
+            "\"endByte\":11,\"severity\":\"error\"," +
+            "\"message\":\"current module\"}]}}"
         ).view();
     const stringv ANALYZER_6 =
         "{\"jsonrpc\":\"2.0\",\"id\":6,\"result\":{\"closed\":true}}";
@@ -119,7 +126,7 @@ test runs_the_lifecycle_and_drops_superseded_diagnostics(
         "Content-Length: 54\r\n\r\n" + ANALYZER_2 +
         "Content-Length: 212\r\n\r\n" + ANALYZER_3 +
         "Content-Length: 54\r\n\r\n" + ANALYZER_4 +
-        "Content-Length: 92\r\n\r\n" + ANALYZER_5 +
+        "Content-Length: 374\r\n\r\n" + ANALYZER_5 +
         "Content-Length: 49\r\n\r\n" + ANALYZER_6 +
         "Content-Length: 38\r\n\r\n" + ANALYZER_7
     );
@@ -182,7 +189,11 @@ test runs_the_lifecycle_and_drops_superseded_diagnostics(
             "{\"jsonrpc\":\"2.0\"," +
             "\"method\":\"textDocument/publishDiagnostics\"," +
             "\"params\":{\"uri\":\"file:///workspace/main.fl\"," +
-            "\"version\":2,\"diagnostics\":[]}}"
+            "\"version\":2,\"diagnostics\":[{\"range\":{" +
+            "\"start\":{\"line\":0,\"character\":7}," +
+            "\"end\":{\"line\":0,\"character\":11}}," +
+            "\"severity\":1,\"code\":\"FLECHA-S0002\"," +
+            "\"source\":\"flecha\",\"message\":\"current module\"}]}}"
         ).view();
     const stringv CLOSE_DIAGNOSTICS =
         (
@@ -193,7 +204,7 @@ test runs_the_lifecycle_and_drops_superseded_diagnostics(
         ).view();
     expected := (
         "Content-Length: 73\r\n\r\n" + INITIALIZE_RESPONSE +
-        "Content-Length: 134\r\n\r\n" + CHANGE_DIAGNOSTICS +
+        "Content-Length: 290\r\n\r\n" + CHANGE_DIAGNOSTICS +
         "Content-Length: 122\r\n\r\n" + CLOSE_DIAGNOSTICS +
         "Content-Length: 38\r\n\r\n" + SHUTDOWN_RESPONSE
     );
@@ -207,8 +218,10 @@ test runs_the_lifecycle_and_drops_superseded_diagnostics(
     asserts::is_true(
         t,
         !strings::contains(outputText, "bad module") and
+            !strings::contains(outputText, "Writer") and
+            strings::contains(outputText, "current module") and
             strings::contains(outputText, "\"version\":2"),
-        "a superseded analyzer snapshot never reaches the editor"
+        "only current-version diagnostics for the requested file are published"
     );
     analyzerText := analyzerDestination[:analyzerOutputPosition].cast<stringv>;
     asserts::is_true(

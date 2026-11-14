@@ -183,6 +183,12 @@ test parses_diagnostics_snapshots(&testing::UnitTest t) {
             "FLECHA-L0001",
             "the diagnostic code is preserved"
         );
+        asserts::string_equal(
+            t,
+            diagnostic.file(),
+            "/workspace/main.fl",
+            "the diagnostic source file is preserved"
+        );
         asserts::is_true(
             t,
             diagnostic.startByte() == 13 and diagnostic.endByte() == 14 and
